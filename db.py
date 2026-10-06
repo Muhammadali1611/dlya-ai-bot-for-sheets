@@ -59,13 +59,34 @@ def init_db():
     _sh = _client().open_by_key(SHEET_ID)
     _active = _sh.worksheet(ACTIVE_SHEET)
     _done = _sh.worksheet(DONE_SHEET)
-    # Jadval vaqt mintaqasi Toshkent bo'lsin va formulalar har daqiqada yangilansin
+    # Vaqt mintaqasi Toshkent, formulalar har daqiqada yangilanadi.
+    # Locale en_US — formulalardagi vergul (,) har doim to'g'ri tushunilsin
+    # (o'zbek/rus locale'da ; kerak bo'ladi va #ERROR! chiqadi).
     _sh.batch_update({"requests": [{
         "updateSpreadsheetProperties": {
-            "properties": {"timeZone": TZ_NAME, "autoRecalc": "MINUTE"},
-            "fields": "timeZone,autoRecalc",
+            "properties": {"timeZone": TZ_NAME, "autoRecalc": "MINUTE",
+                           "locale": "en_US"},
+            "fields": "timeZone,autoRecalc,locale",
         }
     }]})
+    _fix_formulas()
+
+
+def _fix_formulas():
+    """Mavjud qatorlardagi № va 'Qolgan vaqt' formulalarini qayta yozadi
+    (eski #ERROR! kataklarni tuzatadi)."""
+    data = []
+    for rem in _all():
+        r = rem["row"]
+        data.append({"range": f"A{r}", "values": [["=ROW()-1"]]})
+        data.append({"range": f"F{r}", "values": [[LEFT_FORMULA.format(r=r)]]})
+    if data:
+        _active.batch_update(data, value_input_option="USER_ENTERED")
+    done = _done.get_all_values()
+    ddata = [{"range": f"A{i}", "values": [["=ROW()-1"]]}
+             for i in range(2, len(done) + 1) if any(done[i - 1])]
+    if ddata:
+        _done.batch_update(ddata, value_input_option="USER_ENTERED")
 
 
 def _parse(values):

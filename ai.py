@@ -14,11 +14,13 @@ Muhit o'zgaruvchilari:
   ANTHROPIC_API_KEY — Claude kaliti (console.anthropic.com)
   AI_MODEL          — ixtiyoriy, standart: claude-sonnet-5-5
   GEMINI_API_KEY    — Gemini kaliti (aistudio.google.com)
-  GEMINI_MODEL      — ixtiyoriy, standart: gemini-2.5-flash
+  GEMINI_MODELS     — ixtiyoriy, vergul bilan modellar tartibi
+                      (standart: gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash)
 """
 
 import os
 import json
+import time
 import logging
 
 import anthropic
@@ -28,7 +30,14 @@ import triggers
 log = logging.getLogger("reminder-bot.ai")
 
 MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5-5")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Eng aqllisidan boshlab tartib. Biri limitga yetsa yoki ishlamasa — keyingisiga o'tadi.
+# Har model o'z bepul limitiga ega, shuning uchun kunlik bepul so'rovlar ko'payadi.
+GEMINI_MODELS = [m.strip() for m in os.environ.get(
+    "GEMINI_MODELS",
+    os.environ.get("GEMINI_MODEL", "")
+    or "gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash",
+).split(",") if m.strip()]
+_cooldown = {}  # model -> qachongacha ishlatilmaydi (time.time())
 
 
 def _clean(v):
@@ -350,9 +359,34 @@ def _understand_gemini(user_text, now_str, reminders, history=None):
     )
 
     def call():
-        resp = _get_gclient().models.generate_content(
-            model=GEMINI_MODEL, contents=contents, config=config)
-        return resp.text or ""
+        from google.genai import errors as gerr
+        now = time.time()
+        models = [m for m in GEMINI_MODELS if _cooldown.get(m, 0) <= now] or GEMINI_MODELS
+        last_err = None
+        for model in models:
+            try:
+                resp = _get_gclient().models.generate_content(
+                    model=model, contents=contents, config=config)
+                return resp.text or ""
+            except gerr.APIError as e:
+                code, txt = getattr(e, "code", 0), str(e).lower()
+                last_err = e
+                if code == 429 or "quota" in txt or "exhausted" in txt:
+                    # minutlik limit bo'lsa tez qaytadi, kunlik bo'lsa uzoqroq dam oladi
+                    wait = 3600 if "day" in txt or "daily" in txt else 90
+                    _cooldown[model] = time.time() + wait
+                    log.warning("%s limitga yetdi, keyingi modelga o'tilmoqda", model)
+                    continue
+                if code in (404, 400) and ("not found" in txt or "not supported" in txt
+                                           or "model" in txt and "key" not in txt):
+                    _cooldown[model] = time.time() + 86400
+                    log.warning("%s mavjud emas, keyingi modelga o'tilmoqda: %s", model, e)
+                    continue
+                if code in (500, 503) or "overloaded" in txt or "unavailable" in txt:
+                    log.warning("%s band (%s), keyingisi sinab ko'rilmoqda", model, code)
+                    continue
+                raise
+        raise last_err
 
     raw = call()
     try:

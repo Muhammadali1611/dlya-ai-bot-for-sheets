@@ -27,7 +27,7 @@ Misollar:
 | Nomi | Qiymati |
 |---|---|
 | TELEGRAM_BOT_TOKEN | BotFather tokeni |
-| GEMINI_API_KEY | Gemini kaliti (aistudio.google.com) — bepul variant |
+| GEMINI_API_KEY | Gemini kaliti (aistudio.google.com) — bepul variant. Bot 3.8 Flash → 3.6 Flash → 3.5 Flash-Lite → 2.5 Flash tartibida, limit tugasa keyingisiga o'tadi |
 | ANTHROPIC_API_KEY | ixtiyoriy: Claude API kaliti (console.anthropic.com), `sk-ant-...` bilan boshlanadi |
 | AI_MODEL | ixtiyoriy, standart `claude-sonnet-5-5` (arzonroq: `claude-haiku-5-5`) |
 | SHEET_ID | Jadval havolasidagi `/d/` va `/edit` orasidagi qism |

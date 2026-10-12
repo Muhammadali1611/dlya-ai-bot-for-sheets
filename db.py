@@ -23,7 +23,7 @@ SHEET_ID = os.environ["SHEET_ID"]
 ACTIVE_SHEET = "Vazifalar"
 DONE_SHEET = "Bajarilganlar"
 
-KIND_UZ = {"once": "bir martalik", "recurring": "takroriy"}
+KIND_UZ = {"once": "bir martalik", "recurring": "takroriy", "interval": "har N vaqtda"}
 KIND_EN = {v: k for k, v in KIND_UZ.items()}
 
 LEFT_FORMULA = (
@@ -109,6 +109,7 @@ def _parse(values):
             "title": row[1],
             "kind": KIND_EN.get(row[2].strip(), row[2].strip()),
             "human_time": row[3],
+            "next": row[4],
             "left": row[5],
             "status": row[6].strip() or "Faol",
             "trigger_json": row[7],
@@ -252,7 +253,7 @@ def monthly_reset():
         data = [
             {"range": f"G{r['row']}", "values": [["Faol"]]}
             for r in _all()
-            if r["kind"] == "recurring" and r["status"] == "Bitdi"
+            if r["kind"] in ("recurring", "interval") and r["status"] == "Bitdi"
         ]
         if data:
             _active.batch_update(data)

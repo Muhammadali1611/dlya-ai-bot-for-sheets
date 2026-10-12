@@ -1,6 +1,6 @@
 """AI eslatma boti — Google Sheets versiyasi.
 
-Foydalanuvchi o'zbekcha yozadi -> AI (Gemini) tushunadi -> vazifa Sheets'ga yoziladi
+Foydalanuvchi o'zbekcha yozadi -> AI (Claude) tushunadi -> vazifa Sheets'ga yoziladi
 -> vaqti kelganda bot raqamlangan eslatma yuboradi -> "3 bitdi" desangiz
 vazifa Bajarilganlar varag'iga o'tadi.
 """
@@ -10,7 +10,8 @@ import re
 import json
 import asyncio
 import logging
-from datetime import datetime
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import Update
@@ -21,11 +22,12 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+import anthropic
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 
 import db
 import ai
+import triggers
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -36,13 +38,21 @@ log = logging.getLogger("reminder-bot")
 TZ = ZoneInfo(os.environ.get("TZ", "Asia/Tashkent"))
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
+# Har bir chat uchun oxirgi suhbatlar (AI kontekstni tushunishi uchun)
+HISTORY_LEN = int(os.environ.get("HISTORY_LEN", "8"))
+HISTORY = defaultdict(lambda: deque(maxlen=HISTORY_LEN))
+TG_LIMIT = 4000
+
 WELCOME = (
     "Assalomu alaykum! Men sizning AI eslatma yordamchingizman \U0001F916\n\n"
     "Menga oddiy tilda yozing, men eslatib turaman. Masalan:\n"
     "• har chorshanba 14:00 do'konga borish\n"
     "• har oyning birinchi dushanbasi ishchilar bilan majlis\n"
     "• har kuni 8:00 tabletka ich\n"
-    "• ertaga 10:00 bankka bor\n\n"
+    "• ertaga 10:00 bankka bor\n"
+    "• har 3 kunda 11:00 omborni tekshir\n\n"
+    "«Bugun nima ishlarim bor?» deb so'rasangiz ham bo'ladi.\n"
+    "Boshqa istalgan mavzuda ham savol bering \U0001F60A\n\n"
     "Bajarganingizda: «3 bitdi»\n"
     "O'chirish uchun: «3-ni o'chir»\n"
     "Ro'yxat uchun: /list yoki «eslatmalarim»\n\n"
@@ -59,14 +69,39 @@ DONE_RE = re.compile(
 
 # ---------- vaqt hisoblash ----------
 
-def next_fire(kind, params, now=None):
+next_fire = triggers.next_fire
+
+
+def today_times(rem, now=None):
+    """Vazifa bugun qaysi soatlarda ishlashini qaytaradi ("09:00, 15:00" yoki "")."""
     now = now or datetime.now(TZ)
-    if kind == "once":
-        d = datetime.fromisoformat(params["run_date"])
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=TZ)
-        return d
-    return CronTrigger(timezone=TZ, **params).get_next_fire_time(None, now)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    try:
+        params = json.loads(rem["trigger_json"])
+        trig = triggers.build(rem["kind"], params)
+    except Exception:
+        return ""
+    times, prev, t = [], None, trig.get_next_fire_time(None, start)
+    while t is not None and t < end and len(times) < 24:
+        times.append(t.astimezone(TZ).strftime("%H:%M"))
+        prev = t
+        t = trig.get_next_fire_time(prev, prev + timedelta(seconds=1))
+    return ", ".join(times)
+
+
+async def send_long(message, text):
+    """Telegram 4096 belgidan uzun xabarni bo'laklab yuboradi."""
+    text = text or "Bo'ldi ✅"
+    while text:
+        if len(text) <= TG_LIMIT:
+            await message.reply_text(text)
+            return
+        cut = text.rfind("\n", 0, TG_LIMIT)
+        if cut < TG_LIMIT // 2:
+            cut = TG_LIMIT
+        await message.reply_text(text[:cut])
+        text = text[cut:].lstrip("\n")
 
 
 # ---------- jadvalga qo'yish ----------
@@ -89,20 +124,16 @@ async def fire(context: ContextTypes.DEFAULT_TYPE):
         log.warning("Xabar yuborilmadi (id=%s): %s", rem["id"], e)
 
     nxt = None
-    if rem["kind"] == "recurring":
-        nxt = next_fire("recurring", json.loads(rem["trigger_json"]))
+    if rem["kind"] in ("recurring", "interval"):
+        nxt = next_fire(rem["kind"], json.loads(rem["trigger_json"]))
     await asyncio.to_thread(db.after_fire, rem["id"], nxt)
 
 
 def schedule_one(job_queue, rem):
     params = json.loads(rem["trigger_json"])
-    if rem["kind"] == "once":
-        run_date = next_fire("once", params)
-        if run_date <= datetime.now(TZ):
-            return False  # vaqti o'tib ketgan — eslatma yuborilgan, "bitdi"ni kutadi
-        trigger = DateTrigger(run_date=run_date)
-    else:
-        trigger = CronTrigger(timezone=TZ, **params)
+    trigger = triggers.build(rem["kind"], params)
+    if rem["kind"] == "once" and trigger.run_date <= datetime.now(TZ):
+        return False  # vaqti o'tib ketgan — eslatma yuborilgan, "bitdi"ni kutadi
 
     job_queue.run_custom(
         fire, job_kwargs={"trigger": trigger}, name=str(rem["id"]),
@@ -188,13 +219,43 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now_str = now.strftime("%Y-%m-%d %H:%M (%A)")
     reminders = await asyncio.to_thread(db.list_reminders, chat_id)
     own_ids = {r["id"] for r in reminders}
+    for r in reminders:
+        r["today_times"] = today_times(r, now)
 
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
-        result = await asyncio.to_thread(ai.understand, text, now_str, reminders)
+        result = await asyncio.to_thread(
+            ai.understand, text, now_str, reminders, list(HISTORY[chat_id])
+        )
+    except RuntimeError as e:  # kalit umuman qo'yilmagan
+        log.error("%s", e)
+        await update.message.reply_text(
+            "⚠️ Claude API kaliti qo'yilmagan. Railway Variables'ga ANTHROPIC_API_KEY qo'shing."
+        )
+        return
+    except anthropic.AuthenticationError as e:
+        log.error("API kalit xato: %s", e)
+        await update.message.reply_text(
+            "⚠️ Claude API kaliti noto'g'ri. Railway'da ANTHROPIC_API_KEY ni tekshiring."
+        )
+        return
+    except anthropic.RateLimitError as e:
+        log.warning("Limit: %s", e)
+        await update.message.reply_text(
+            "⏳ Hozir so'rov ko'p bo'lib ketdi, bir daqiqadan keyin qayta yozing."
+        )
+        return
+    except anthropic.APIStatusError as e:
+        log.error("Claude API xatosi %s: %s", e.status_code, e)
+        msg = "⚠️ Claude bilan bog'lanishda xato. Birozdan keyin qayta urinib ko'ring."
+        if "credit" in str(e).lower():
+            msg = "⚠️ Claude hisobida balans tugagan. console.anthropic.com da to'ldiring."
+        await update.message.reply_text(msg)
+        return
     except Exception as e:
         log.exception("AI xatosi: %s", e)
         await update.message.reply_text(
-            "Kechirasiz, buni tushunolmadim \U0001F648 Boshqacharoq yozib ko'ring."
+            "Kechirasiz, xatolik bo'ldi \U0001F648 Yana bir bor yozib ko'ring."
         )
         return
 
@@ -226,12 +287,16 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ «{r.get('title', '')}» ni yozib bo'lmadi. Boshqacharoq aytib ko'ring."
             )
 
+    reply = result.get("reply") or ""
+    HISTORY[chat_id].append((text, reply or f"[{action}]"))
+
     if action == "list":
+        if reply:
+            await send_long(update.message, reply)
         await send_list(update, chat_id)
         return
 
-    reply = result.get("reply") or "Bo'ldi ✅"
-    await update.message.reply_text(reply)
+    await send_long(update.message, reply or "Bo'ldi ✅")
 
 
 # ---------- ishga tushish ----------
@@ -244,8 +309,8 @@ async def post_init(app: Application):
         try:
             if schedule_one(app.job_queue, rem):
                 count += 1
-            if rem["kind"] == "recurring":
-                refresh[rem["id"]] = next_fire("recurring", json.loads(rem["trigger_json"]))
+            if rem["kind"] in ("recurring", "interval"):
+                refresh[rem["id"]] = next_fire(rem["kind"], json.loads(rem["trigger_json"]))
         except Exception as e:
             log.exception("Yuklashda xato (id=%s): %s", rem.get("id"), e)
     await asyncio.to_thread(db.refresh_next_times, refresh)

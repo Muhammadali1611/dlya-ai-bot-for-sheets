@@ -23,6 +23,7 @@ from telegram.ext import (
     filters,
 )
 import anthropic
+from google.genai import errors as genai_errors
 from apscheduler.triggers.cron import CronTrigger
 
 import db
@@ -230,7 +231,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except RuntimeError as e:  # kalit umuman qo'yilmagan
         log.error("%s", e)
         await update.message.reply_text(
-            "⚠️ Claude API kaliti qo'yilmagan. Railway Variables'ga ANTHROPIC_API_KEY qo'shing."
+            "⚠️ AI kaliti qo'yilmagan. Railway Variables'ga GEMINI_API_KEY yoki ANTHROPIC_API_KEY qo'shing."
         )
         return
     except anthropic.AuthenticationError as e:
@@ -250,6 +251,17 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "⚠️ Claude bilan bog'lanishda xato. Birozdan keyin qayta urinib ko'ring."
         if "credit" in str(e).lower():
             msg = "⚠️ Claude hisobida balans tugagan. console.anthropic.com da to'ldiring."
+        await update.message.reply_text(msg)
+        return
+    except genai_errors.APIError as e:
+        log.error("Gemini xatosi %s: %s", getattr(e, "code", "?"), e)
+        code, txt = getattr(e, "code", 0), str(e).lower()
+        if code == 429 or "quota" in txt or "exhausted" in txt:
+            msg = "⏳ Gemini bepul limiti vaqtincha tugadi, birozdan keyin yozing."
+        elif code in (400, 401, 403) and ("key" in txt or "permission" in txt or "auth" in txt):
+            msg = "⚠️ Gemini API kaliti noto'g'ri. Railway'da GEMINI_API_KEY ni tekshiring."
+        else:
+            msg = "⚠️ AI bilan bog'lanishda xato. Birozdan keyin qayta urinib ko'ring."
         await update.message.reply_text(msg)
         return
     except Exception as e:
@@ -321,7 +333,7 @@ async def post_init(app: Application):
         job_kwargs={"trigger": CronTrigger(day=1, hour=0, minute=1, timezone=TZ)},
         name="monthly_reset",
     )
-    log.info("Bot tayyor. %d ta vazifa jadvalga qo'yildi.", count)
+    log.info("Bot tayyor. %d ta vazifa jadvalga qo'yildi. AI: %s", count, ai.provider())
 
 
 def main():

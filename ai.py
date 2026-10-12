@@ -1,4 +1,9 @@
-"""AI qismi: foydalanuvchining o'zbekcha gapini Claude (Anthropic) orqali tushunadi.
+"""AI qismi: foydalanuvchining o'zbekcha gapini tushunadi — Claude yoki Gemini orqali.
+
+Qaysi biri ishlatiladi:
+  - ANTHROPIC_API_KEY da haqiqiy Claude API kaliti (sk-ant-api...) bo'lsa — Claude;
+  - aks holda GEMINI_API_KEY bo'lsa — Gemini (bepul).
+  AI_PROVIDER=claude yoki AI_PROVIDER=gemini bilan majburan tanlash mumkin.
 
 - Javob har doim tuzilgan bo'ladi (tool use) — JSON buzilib qolmaydi.
 - Oxirgi suhbat tarixi beriladi, shuning uchun "uni 10 ga o'tkaz" kabi gaplarni ham tushunadi.
@@ -8,9 +13,12 @@
 Muhit o'zgaruvchilari:
   ANTHROPIC_API_KEY — Claude kaliti (console.anthropic.com)
   AI_MODEL          — ixtiyoriy, standart: claude-sonnet-5-5
+  GEMINI_API_KEY    — Gemini kaliti (aistudio.google.com)
+  GEMINI_MODEL      — ixtiyoriy, standart: gemini-2.5-flash
 """
 
 import os
+import json
 import logging
 
 import anthropic
@@ -20,6 +28,32 @@ import triggers
 log = logging.getLogger("reminder-bot.ai")
 
 MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5-5")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+
+def _clean(v):
+    v = (v or "").strip().strip('"').strip("'").strip()
+    if v.lower().startswith("bearer "):
+        v = v[7:].strip()
+    return v
+
+
+def provider():
+    """Qaysi AI ishlatilishini aniqlaydi: 'claude', 'gemini' yoki None."""
+    forced = os.environ.get("AI_PROVIDER", "").strip().lower()
+    claude_key = _clean(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"))
+    gemini_key = _clean(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    # Obuna tokeni (sk-ant-oat...) bot uchun emas — e'tiborga olinmaydi
+    claude_ok = claude_key.startswith("sk-ant-") and not claude_key.startswith("sk-ant-oat")
+    gemini_ok = bool(gemini_key) and not gemini_key.startswith("sk-ant-")
+    if forced in ("claude", "gemini"):
+        return forced
+    if claude_ok:
+        return "claude"
+    if gemini_ok:
+        return "gemini"
+    return None
+
 
 def _api_key():
     """ANTHROPIC_API_KEY bo'lmasa, eski GEMINI_API_KEY nomiga qo'yilgan Claude kalitini ham oladi."""
@@ -198,21 +232,31 @@ def _validate(result):
     return errors
 
 
+def _context_text(now_str, reminders):
+    return (
+        f"HOZIRGI VAQT (Toshkent): {now_str}\n\n"
+        f"FOYDALANUVCHINING MAVJUD ESLATMALARI:\n{_render_reminders(reminders)}"
+    )
+
+
 def understand(user_text, now_str, reminders, history=None):
     """Foydalanuvchi gapini tushunib, amallar lug'atini qaytaradi.
 
     history — [(user_text, bot_reply), ...] oxirgi suhbatlar (eskidan yangiga).
     """
+    p = provider()
+    if p == "claude":
+        return _understand_claude(user_text, now_str, reminders, history)
+    if p == "gemini":
+        return _understand_gemini(user_text, now_str, reminders, history)
+    raise RuntimeError("AI kaliti topilmadi — Railway'ga GEMINI_API_KEY yoki ANTHROPIC_API_KEY qo'shing.")
+
+
+def _understand_claude(user_text, now_str, reminders, history=None):
     system = [
         # O'zgarmas qism keshlanadi — tezroq va arzonroq ishlaydi
         {"type": "text", "text": SYSTEM_RULES, "cache_control": {"type": "ephemeral"}},
-        {
-            "type": "text",
-            "text": (
-                f"HOZIRGI VAQT (Toshkent): {now_str}\n\n"
-                f"FOYDALANUVCHINING MAVJUD ESLATMALARI:\n{_render_reminders(reminders)}"
-            ),
-        },
+        {"type": "text", "text": _context_text(now_str, reminders)},
     ]
 
     messages = []
@@ -243,4 +287,85 @@ def understand(user_text, now_str, reminders, history=None):
         resp = _call(system, messages)
         result = dict(_tool_input(resp).input)
 
+    return result
+
+
+# ---------------- Gemini ----------------
+
+GEMINI_FORMAT = """
+## JAVOB FORMATI (Gemini uchun)
+Asbob chaqirish o'rniga FAQAT bitta JSON obyekt qaytar, boshqa hech qanday matn yozma:
+{"action": "create|delete|done|update|list|chat",
+ "reply": "<o'zbekcha javob>",
+ "reminders_to_create": [{"title": "...", "kind": "once|recurring|interval",
+                          "trigger": {...}, "human_time": "..."}],
+ "ids_to_delete": [<id>], "ids_done": [<id>]}
+Bo'sh ro'yxatlarni ham [] qilib yoz.
+"""
+
+_gclient = None
+
+
+def _get_gclient():
+    global _gclient
+    if _gclient is None:
+        from google import genai
+        key = _clean(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+        _gclient = genai.Client(api_key=key)
+    return _gclient
+
+
+def _parse_json(text):
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    if not text.startswith("{"):
+        a, b = text.find("{"), text.rfind("}")
+        if a != -1 and b > a:
+            text = text[a:b + 1]
+    data = json.loads(text)
+    for k in ("reminders_to_create", "ids_to_delete", "ids_done"):
+        data[k] = data.get(k) or []
+    data.setdefault("action", "chat")
+    data.setdefault("reply", "")
+    return data
+
+
+def _understand_gemini(user_text, now_str, reminders, history=None):
+    from google.genai import types
+
+    system = SYSTEM_RULES + GEMINI_FORMAT + "\n" + _context_text(now_str, reminders)
+    contents = []
+    for u, a in history or []:
+        contents.append(types.Content(role="user", parts=[types.Part(text=u)]))
+        contents.append(types.Content(role="model", parts=[types.Part(text=a or "Bo'ldi.")]))
+    contents.append(types.Content(role="user", parts=[types.Part(text=user_text)]))
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=0.2,
+        response_mime_type="application/json",
+    )
+
+    def call():
+        resp = _get_gclient().models.generate_content(
+            model=GEMINI_MODEL, contents=contents, config=config)
+        return resp.text or ""
+
+    raw = call()
+    try:
+        result = _parse_json(raw)
+        errors = _validate(result)
+    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+        result, errors = None, [f"JSON o'qib bo'lmadi: {e}"]
+
+    if errors:
+        log.warning("Gemini javobida xato, qayta so'ralmoqda: %s", errors)
+        contents.append(types.Content(role="model", parts=[types.Part(text=raw or "{}")]))
+        contents.append(types.Content(role="user", parts=[types.Part(
+            text="Javobingda xato bor, qoidalarga qarab tuzatib, to'liq JSON'ni qaytadan ber:\n"
+                 + "\n".join(errors))]))
+        result = _parse_json(call())
     return result

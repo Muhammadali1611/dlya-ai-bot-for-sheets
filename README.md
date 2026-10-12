@@ -27,7 +27,8 @@ Misollar:
 | Nomi | Qiymati |
 |---|---|
 | TELEGRAM_BOT_TOKEN | BotFather tokeni |
-| ANTHROPIC_API_KEY | Claude API kaliti (console.anthropic.com), `sk-ant-...` bilan boshlanadi |
+| GEMINI_API_KEY | Gemini kaliti (aistudio.google.com) — bepul variant |
+| ANTHROPIC_API_KEY | ixtiyoriy: Claude API kaliti (console.anthropic.com), `sk-ant-...` bilan boshlanadi |
 | AI_MODEL | ixtiyoriy, standart `claude-sonnet-5-5` (arzonroq: `claude-haiku-5-5`) |
 | SHEET_ID | Jadval havolasidagi `/d/` va `/edit` orasidagi qism |
 | GOOGLE_CREDENTIALS | Service account JSON faylining **butun matni** (nusxa olib qo'yiladi) |
@@ -41,7 +42,7 @@ Endi Volume va DB_PATH kerak emas — hamma ma'lumot Sheets'da.
 
 ## Fayllar
 - bot.py — asosiy bot (eslatma, "bitdi", oy boshida reset)
-- ai.py — Claude yordamida o'zbekcha gapni tushunadi, suhbat qiladi
+- ai.py — Claude yoki Gemini yordamida (qaysi kalit tursa, o'shani tanlaydi) o'zbekcha gapni tushunadi, suhbat qiladi
 - triggers.py — vaqt jadvallari (bir martalik, takroriy, har N kunda)
 - db.py — Google Sheets bilan ishlaydi
 - requirements.txt, Procfile, railway.json — joylash uchun

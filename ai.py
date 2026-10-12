@@ -25,12 +25,18 @@ def _api_key():
     """ANTHROPIC_API_KEY bo'lmasa, eski GEMINI_API_KEY nomiga qo'yilgan Claude kalitini ham oladi."""
     key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
     if not key:
-        old = os.environ.get("GEMINI_API_KEY", "")
+        old = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
         if old.startswith("sk-ant-"):
             log.warning("Claude kaliti GEMINI_API_KEY nomida turibdi — ANTHROPIC_API_KEY ga o'tkazing.")
             key = old
+    # Nusxa olinganda qo'shilib qolgan bo'sh joy, qo'shtirnoq, "Bearer" ni tozalaydi
+    key = (key or "").strip().strip('"').strip("'").strip()
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY topilmadi — Railway Variables'ga qo'shing.")
+    if not key.startswith("sk-ant-"):
+        log.error("Kalit sk-ant- bilan boshlanmayapti (boshi: %s...) — bu Claude API kaliti emas.", key[:6])
     return key
 
 

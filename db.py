@@ -26,7 +26,7 @@ COLS = """id, title, kind, trigger, human_time, next_at, status, bitguncha,
           odam_id, odam_ism, xabar_matni, last_fired_at, created_at"""
 # Vazifa + biriktirilgan odam (ismi, telegram id, alifbosi)
 TASK_SELECT = """select v.id, v.title, v.kind, v.trigger, v.human_time, v.next_at, v.status,
-       v.bitguncha, v.odam_id, v.odam_ism, v.xabar_matni, v.last_fired_at, v.created_at,
+       v.bitguncha, v.odam_id, v.odam_ism, v.xabar_matni, v.last_fired_at, v.created_at, v.manba,
        o.ism as odam, o.tg_user_id as odam_tg, o.alifbo as odam_alifbo
   from eslatma.vazifalar v left join eslatma.odamlar o on o.id = v.odam_id"""
 
@@ -150,13 +150,13 @@ async def history(limit=100):
 # ---------- yozish ----------
 
 async def add_task(title, kind, trigger, human_time, next_at, bitguncha=False,
-                   status="faol", odam_id=None, odam_ism=None, xabar_matni=None):
+                   status="faol", odam_id=None, odam_ism=None, xabar_matni=None, manba="men"):
     return await _pool.fetchval(
         """insert into eslatma.vazifalar
-             (title, kind, trigger, human_time, next_at, bitguncha, status, odam_id, odam_ism, xabar_matni)
-           values ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10) returning id""",
+             (title, kind, trigger, human_time, next_at, bitguncha, status, odam_id, odam_ism, xabar_matni, manba)
+           values ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11) returning id""",
         title, kind, json.dumps(trigger, ensure_ascii=False), human_time, next_at,
-        bitguncha, status, odam_id, odam_ism, xabar_matni,
+        bitguncha, status, odam_id, odam_ism, xabar_matni, manba,
     )
 
 

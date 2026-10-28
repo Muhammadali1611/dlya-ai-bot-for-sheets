@@ -29,3 +29,6 @@ alter table eslatma.yuborishlar drop constraint if exists yuborishlar_vazifa_id_
 alter table eslatma.yuborishlar add constraint yuborishlar_vazifa_id_fkey
     foreign key (vazifa_id) references eslatma.vazifalar(id) on delete set null;
 alter table eslatma.yuborishlar add column if not exists vazifa_title text;
+
+-- Vazifa qayerdan: 'men' — egasi qo'ygan; 'sorov' — boshqa odam egasidan eslatishni so'ragan
+alter table eslatma.vazifalar add column if not exists manba text not null default 'men';

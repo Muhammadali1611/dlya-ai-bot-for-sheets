@@ -191,6 +191,10 @@ async def handle_text(text):
         return "Barakalla! ✅ Bajarildi:\n• " + "\n• ".join(titles), False
 
     # 2) Qolgan hamma narsa — AI orqali
+    try:
+        ai.PEOPLE = [p["ism"] for p in await db.list_people()]
+    except Exception:  # noqa: BLE001
+        pass
     now = now_tz()
     for t in tasks:
         t["today_times"] = today_times(t, now)
@@ -250,6 +254,16 @@ async def app_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Odam bog'lash uchun username/raqam kutilayotgan bo'lsa — AI'siz, darhol
+    if kuzatuv.PENDING:
+        try:
+            res = await kuzatuv.try_resolve_text(update.message.text)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Odamni bog'lashda xato: %s", e)
+            res = "⚠️ Odamni topishda xato bo'ldi, qayta yozib ko'ring."
+        if res:
+            await update.message.reply_text(res)
+            return
     await context.bot.send_chat_action(chat_id=OWNER_ID, action="typing")
     try:
         reply, show_list = await handle_text(update.message.text)
@@ -350,6 +364,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer()
         return
     base = (q.message.text or "") if q.message else ""
+    if parts[0] == "del":
+        t = await db.get_task(tid)
+        ok = await db.delete_task(tid)
+        await q.answer("Bekor qilindi" if ok else "Bu vazifa endi yo'q")
+        if q.message:
+            await q.edit_message_text(base + ("\n\n❌ Bekor qilindi (unga xabar bormaydi)" if ok else ""))
+        return
+    if parts[0] == "odamyoz":
+        t = await db.get_task(tid)
+        kuzatuv.wait_username(tid, (t or {}).get("odam_ism") or "odam")
+        await q.answer()
+        if q.message:
+            await q.edit_message_text(base + "\n\n✍️ @username yoki telefon raqamini yozib yuboring.")
+        return
     if parts[0] == "odam" and len(parts) > 2:
         try:
             msg = await kuzatuv.choose(tid, int(parts[2]))

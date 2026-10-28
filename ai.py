@@ -35,7 +35,8 @@ MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5-5")
 GEMINI_MODELS = [m.strip() for m in os.environ.get(
     "GEMINI_MODELS",
     os.environ.get("GEMINI_MODEL", "")
-    or "gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash",
+    # Tez modellar birinchi: oddiy buyruqlar uchun yetarli aqlli va 1-3 soniyada javob beradi
+    or "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.6-flash",
 ).split(",") if m.strip()]
 _cooldown = {}  # model -> qachongacha ishlatilmaydi (time.time())
 
@@ -166,16 +167,21 @@ Sen har bir xabarga `javob_berish` asbobini AYNAN BIR MARTA chaqirib javob beras
 - reply har doim samimiy, qisqa va o'zbekcha bo'lsin. Yaratilgan vazifalarni reply'da sanab o't.
 
 ## BOSHQA ODAMGA YUBORILADIGAN VAZIFALAR
-Foydalanuvchi "Abbosxon akaga ... desin/eslat/ayt/yubor", "Akmal akaga har kuni ... ni eslatib tur",
-"Ibrohimjon akadan ... ni so'ra" desa — bu vazifa O'SHA ODAMGA foydalanuvchining profilidan yuboriladi:
+Gapda "<ism> akaga/opaga/ga" + yubor / yuborish kerak / ayt / aytish kerak / eslat / eslatib tur / yoz /
+xabar ber / so'ra bo'lsa — bu vazifa O'SHA ODAMGA foydalanuvchining profilidan yuboriladi (kimga TO'LDIRILADI).
+Ism yonidagi raqam yoki laqab (masalan "Ibrohimjon aka 755", "Akmal aka Isuzu") — kimga ning bir qismi,
+chunki foydalanuvchi telefonida odamlar shunday saqlangan. Uni kimga ga qo'sh: "Ibrohimjon aka 755".
+Vaqt aytilmasa va "hozir/darhol" ma'nosi bo'lsa — run_date = HOZIRGI VAQT + 1 daqiqa.
 - kimga: odamning ismi, murojaat bilan, bosh kelishikda ("Abbosxon aka", "Ibrohimjon aka", "Dilnoza opa").
 - xabar: o'sha odamga boradigan tayyor xabar. Odamga "siz" deb, hurmat bilan, QISQA va ANIQ yoz,
   ismi bilan boshla. Yoshi kattalar o'qiydi — uzun gap, ortiqcha so'z, emoji ishlatma.
   Masalan: "Abbosxon aka, laminat ombor xonasining tozaligini ko'rib oling."
             "Ibrohimjon aka, bugun qaysi agent bilan regionga chiqasiz?"
 - title: foydalanuvchi uchun qisqa nom ("Abbosxon aka — laminat ombor tozaligi").
-- Agar foydalanuvchi o'zi qiladigan ish bo'lsa ("Abbosxon akaga telefon qilishim kerak") — kimga BO'SH,
-  bu oddiy eslatma.
+- Agar foydalanuvchi o'zi qiladigan ish bo'lsa ("Abbosxon akaga telefon qilishim kerak",
+  "Abbosxon aka bilan gaplashishim kerak") — kimga BO'SH, bu oddiy eslatma.
+- Nima yuborish kerakligi aytilmagan bo'lsa ("Ibrohimjon akaga yuborish kerak") — taxmin qilma:
+  action "chat", reply'da "Ibrohimjon akaga nima deb yozay va qachon?" deb so'ra.
 - Mavjud vazifani odamga biriktirish ("4-vazifani Akmal akaga biriktir") → action "update":
   eskisini o'chir, yangisini kimga va xabar bilan to'liq yoz.
 
@@ -218,6 +224,8 @@ bitguncha (ixtiyoriy, true/false):
 "ertaga 10 da bank, payshanba 15:00 da Rustam aka bilan uchrashuv" → ikkita "once" vazifa.
 "Abbosxon akaga har 3 kunda laminat ombor xonasini tozaligini ko'rib olishni ayt" →
   {"title":"Abbosxon aka — laminat ombor tozaligi","kind":"interval","trigger":{"days":3,"start":"<bugun yoki ertaga>T09:00:00"},"human_time":"Har 3 kunda 9:00","kimga":"Abbosxon aka","xabar":"Abbosxon aka, laminat ombor xonasining tozaligini ko'rib oling."}
+"Ibrohimjon aka 755 ga ertaga 9 da hisobotni yuborsin deb yoz" →
+  {"title":"Ibrohimjon aka — hisobot","kind":"once","trigger":{"run_date":"<ertaga>T09:00:00"},"human_time":"Ertaga 9:00","kimga":"Ibrohimjon aka 755","xabar":"Ibrohimjon aka, hisobotni yuborib bering."}
 "elevator ishi bitmaguncha har kuni 8 da eslat" →
   {"title":"Elevator ishini tekshirish","kind":"recurring","trigger":{"hour":8,"minute":0},"human_time":"Har kuni 8:00 (bitguncha)","bitguncha":true}
 """
@@ -269,9 +277,14 @@ def _validate(result):
     return errors
 
 
+PEOPLE = []  # bot.py yangilab turadi: ma'lum odamlar ismlari
+
+
 def _context_text(now_str, reminders):
+    ppl = ", ".join(PEOPLE) if PEOPLE else "(hali yo'q)"
     return (
         f"HOZIRGI VAQT (Toshkent): {now_str}\n\n"
+        f"MA'LUM ODAMLAR (kimga uchun shu ismlarni ishlat): {ppl}\n\n"
         f"FOYDALANUVCHINING MAVJUD ESLATMALARI:\n{_render_reminders(reminders)}"
     )
 
@@ -349,7 +362,10 @@ def _get_gclient():
     if _gclient is None:
         from google import genai
         key = _clean(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-        _gclient = genai.Client(api_key=key)
+        from google.genai import types
+        # Bir model 12 soniyada javob bermasa — kutmasdan keyingisiga o'tamiz
+        _gclient = genai.Client(api_key=key, http_options=types.HttpOptions(
+            timeout=int(os.environ.get("AI_TIMEOUT_MS", "12000"))))
     return _gclient
 
 
@@ -434,7 +450,15 @@ def _gemini_generate(contents, config):
                 log.warning("%s mavjud emas, keyingi modelga o'tilmoqda: %s", model, e)
                 continue
             if code in (500, 503) or "overloaded" in txt or "unavailable" in txt:
+                _cooldown[model] = time.time() + 300  # 5 daqiqa unga urinmaymiz
                 log.warning("%s band (%s), keyingisi sinab ko'rilmoqda", model, code)
+                continue
+            raise
+        except Exception as e:  # noqa: BLE001 — timeout / tarmoq
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower() or e.__class__.__name__.endswith("Timeout"):
+                _cooldown[model] = time.time() + 300
+                log.warning("%s 12 soniyada javob bermadi, keyingisi", model)
+                last_err = e
                 continue
             raise
     raise last_err
@@ -494,4 +518,61 @@ def _parse_reply(raw):
         data["qaror"] = "malumot"
     if data.get("qaror") == "kochirildi" and not data.get("yangi_vaqt"):
         data["qaror"] = "malumot"
+    return data
+
+
+# ---------------- Boshqa odam egasidan eslatma so'rasa ----------------
+
+REQUEST_RULES = """Sen — Muhammadalining shaxsiy yordamchisisan va UNING Telegram akkauntidan yozasan.
+Boshqa bir odam Muhammadaliga shaxsiy xabar yozdi. Agar u Muhammadalidan O'ZIGA nimanidir eslatib
+qo'yishni so'rayotgan bo'lsa ("ertaga 8 da ishga borishimni eslatib qo'ying", "dushanba kuni pulni
+eslatarsiz"), shu so'rovni aniqlab ol.
+
+Faqat bitta JSON qaytar:
+{"sorov": true|false,
+ "tayyor": true|false,
+ "savol": "<aniqlashtiruvchi savol yoki null>",
+ "title": "<Muhammadali uchun qisqa nom: 'Akmal aka — ishga borish'>",
+ "kind": "once"|"recurring"|"interval",
+ "trigger": {...},
+ "human_time": "<'29-oktabr 8:00'>",
+ "xabar": "<eslatma vaqti kelganda O'SHA ODAMGA boradigan xabar>",
+ "javob": "<hozir o'sha odamga yoziladigan tasdiq>"}
+
+Qoidalar:
+- sorov=false: bu eslatma so'rovi emas (oddiy gap, savol, boshqa ish). Shunda boshqa maydonlar null.
+- Sana va soat ANIQ bo'lishi shart. "ertaga 8 da" — aniq (ertalab 8:00). "keyinroq", "bir kun",
+  "ertalab" (soatsiz) — aniq emas: tayyor=false va savol ber, masalan
+  "Xo'p, qaysi kuni soat nechada eslatay?" yoki "Ertaga soat nechada eslatay?".
+  Faqat yetishmayotgan narsani so'ra, bitta qisqa savol.
+- tayyor=true bo'lsa trigger qoidalari: once -> {"run_date":"YYYY-MM-DDTHH:MM:00"} (Toshkent vaqti,
+  HOZIRGI VAQTdan hisobla); recurring -> {"day_of_week":"mon",...,"hour":8,"minute":0};
+  interval -> {"days":N,"start":"..."}.
+- xabar: o'sha odamga hurmat bilan, ismi bilan, qisqa: "Akmal aka, bugun soat 8:00 da ishga borishingiz kerak."
+- javob: qisqa tasdiq: "Xo'p, ertaga soat 8:00 da eslataman."
+- Hamma matn o'zbekcha lotin yozuvida (keyin kerak bo'lsa kirillga o'giriladi).
+- Muhammadalining nomidan yozayotganingni bildirma, oddiy odamdek qisqa yoz."""
+
+
+def analyze_request(dialog, sender_name, now_str):
+    """dialog — [(kim, matn), ...]: 'u' — odam, 'men' — bizning javoblarimiz."""
+    from google.genai import types
+
+    lines = "\n".join(f"{'ODAM' if k == 'u' else 'MEN'}: {m}" for k, m in dialog)
+    text = (f"HOZIRGI VAQT (Toshkent): {now_str}\nODAMNING ISMI: {sender_name}\n\n"
+            f"YOZISHMA:\n{lines}")
+    config = types.GenerateContentConfig(
+        system_instruction=REQUEST_RULES, temperature=0.1, response_mime_type="application/json")
+    raw = _gemini_generate([types.Content(role="user", parts=[types.Part(text=text)])], config)
+    t = (raw or "").strip()
+    a, b = t.find("{"), t.rfind("}")
+    data = json.loads(t[a:b + 1] if a != -1 and b > a else t)
+    if data.get("sorov") and data.get("tayyor"):
+        try:
+            nxt = triggers.next_fire(data.get("kind"), data.get("trigger"))
+            if nxt is None:
+                raise ValueError("o'tgan")
+        except Exception:  # noqa: BLE001
+            data["tayyor"] = False
+            data["savol"] = data.get("savol") or "Qaysi kuni soat nechada eslatay?"
     return data

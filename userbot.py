@@ -56,10 +56,22 @@ def _norm(s):
 
 
 def name_score(query, cand):
-    """Ism o'xshashligi 0..1. Lotin va kirill ikkalasi solishtiriladi."""
+    """Ism o'xshashligi 0..1. Lotin va kirill ikkalasi solishtiriladi.
+    Ismdagi raqam ("Ibrohim aka 755") mos kelsa — deyarli aniq o'sha odam."""
     q_lat, c = _norm(query), _norm(cand)
     if not q_lat or not c:
         return 0.0
+    q_nums = set(re.findall(r"\d{2,}", q_lat))
+    num_hit = bool(q_nums & set(re.findall(r"\d{2,}", c)))
+    q_lat = re.sub(r"\d+", " ", q_lat).strip() or q_lat
+    c = re.sub(r"\b\d+\b", " ", c).strip() or c
+    base = _name_only(q_lat, c, query)
+    if num_hit:
+        return 0.99 if base >= 0.6 else base + 0.15
+    return base
+
+
+def _name_only(q_lat, c, query):
     q_cyr = _norm(to_cyrillic(query))
     best = 0.0
     for q in {q_lat, q_cyr}:
@@ -228,8 +240,22 @@ class UserBot:
         self._people_cache = (time.time(), out)
         return out
 
-    async def find_people(self, name, limit=4):
-        people = await self._all_people()
+    async def find_people(self, name, limit=5):
+        people = list(await self._all_people())
+        # Telegram'ning o'z qidiruvi ham (kontakt nomi, username) — kirill va lotinda
+        seen = {u.id for u in people}
+        for q in {re.sub(r"\b(aka|akaga|opa|opaga)\b", "", name, flags=re.I).strip(), to_cyrillic(name)}:
+            q = q.strip()
+            if len(q) < 3:
+                continue
+            try:
+                res = await self.client(functions.contacts.SearchRequest(q=q[:60], limit=10))
+                for u in res.users:
+                    if not u.bot and u.id not in seen:
+                        seen.add(u.id)
+                        people.append(u)
+            except Exception as e:  # noqa: BLE001
+                log.debug("contacts.search xato: %s", e)
         scored = []
         for u in people:
             label = user_label(u)
@@ -239,6 +265,29 @@ class UserBot:
         scored.sort(key=lambda x: -x[0])
         return [{"id": u.id, "name": user_label(u), "username": u.username,
                  "phone": u.phone, "score": round(s, 2)} for s, u in scored[:limit]]
+
+    async def resolve(self, text):
+        """@username, t.me havola yoki telefon raqamidan odamni topadi."""
+        t = (text or "").strip()
+        m = re.search(r"(?:t\.me/|@)([A-Za-z][\w]{3,})", t)
+        if m:
+            try:
+                u = await self.client.get_entity(m.group(1))
+            except Exception:  # noqa: BLE001
+                raise ValueError(f"@{m.group(1)} topilmadi. Username to'g'ri yozilganini tekshiring.")
+            if not isinstance(u, types.User) or u.bot:
+                raise ValueError("Bu odam emas (kanal yoki bot).")
+            return {"id": u.id, "name": user_label(u), "username": u.username, "phone": u.phone}
+        digits = re.sub(r"\D", "", t)
+        if len(digits) >= 9:
+            phone = "+" + (digits if digits.startswith("998") or len(digits) > 9 else "998" + digits)
+            res = await self.client(functions.contacts.ImportContactsRequest([
+                types.InputPhoneContact(client_id=0, phone=phone, first_name="Eslatma", last_name="")]))
+            if not res.users:
+                raise ValueError(f"{phone} raqamida Telegram akkaunt topilmadi yoki u raqamini yashirgan.")
+            u = res.users[0]
+            return {"id": u.id, "name": user_label(u), "username": u.username, "phone": u.phone}
+        raise ValueError("Username (@ bilan) yoki telefon raqamini yozing.")
 
     async def get_user(self, uid):
         u = await self.client.get_entity(uid)

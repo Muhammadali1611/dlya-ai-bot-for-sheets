@@ -9,6 +9,7 @@ Oqim:
 """
 
 import os
+import re
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -18,6 +19,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import ai
 import db
+import triggers
 from translit import to_cyrillic
 from userbot import name_score
 
@@ -29,6 +31,10 @@ FOLLOWUP = [int(x) for x in os.environ.get("FOLLOWUP_MINUTES", "60,180").split("
 GIVE_UP_AFTER = int(os.environ.get("GIVE_UP_MINUTES", "60"))   # oxirgi so'rovdan keyin
 UNREAD_ALERT = int(os.environ.get("UNREAD_ALERT_MINUTES", "360"))  # o'qilmasa egasiga xabar
 
+PENDING = {}    # egasi username/raqam yozishini kutyapmiz: {"tid", "name", "until"}
+REQUESTS = {}   # boshqalar bilan eslatma so'rovi suhbati: {tg_id: {"dialog": [...], "until": dt}}
+# Faqat shu so'zlar bor xabarlar AI'ga yuboriladi (boshqa yozishmalaringiz AI'ga bormaydi)
+REMIND_RE = re.compile(r"(eslat|eslab|esla[bt]ib|esimga sol|yodimga sol|эслат|эслаб|напомн|напомин)", re.I)
 BOT = None      # telegram.Bot
 UB = None       # userbot.UserBot
 REMINDER_KB = None
@@ -62,9 +68,9 @@ def when_text(dt):
     return f"{day} {dt:%H:%M}"
 
 
-async def owner(text, kb=None):
+async def owner(text, kb=None, parse=False):
     try:
-        await BOT.send_message(OWNER_ID, text, reply_markup=kb)
+        await BOT.send_message(OWNER_ID, text, reply_markup=kb, parse_mode="Markdown" if parse else None)
     except Exception as e:  # noqa: BLE001
         log.warning("Egasiga xabar yuborilmadi: %s", e)
 
@@ -94,28 +100,52 @@ async def ask_choose(tid, name):
         log.exception("Odam qidirishda xato: %s", e)
         cands = []
     if not cands:
+        wait_username(tid, name)
         await owner(
-            f"👤 «{name}» ni kontaktlaringiz va yozishmalaringizdan topa olmadim.\n"
-            "Telefoningizdagi kontakt nomini aytib qayta yozing (masalan: «4-vazifani Abbos Karimovga biriktir»).\n"
-            "Hozircha bu vazifani sizga eslataman.")
+            f"👤 «{name}» ni kontaktlaringizdan topa olmadim.\n\n"
+            "Uning @username'ini yoki telefon raqamini yozib yuboring — shu odamga bog'layman.\n"
+            "(Masalan: @ibrohim_aka yoki 90 123 45 67)")
         return
     rows = []
     for c in cands:
         extra = f" (@{c['username']})" if c.get("username") else (f" (+{c['phone'][-4:]}…)" if c.get("phone") else "")
         rows.append([InlineKeyboardButton(f"{c['name']}{extra}"[:60], callback_data=f"odam:{tid}:{c['id']}")])
-    rows.append([InlineKeyboardButton("❌ Hech biri emas", callback_data=f"odam:{tid}:0")])
+    rows.append([InlineKeyboardButton("✍️ Username yoki raqam yozaman", callback_data=f"odamyoz:{tid}")])
+    rows.append([InlineKeyboardButton("❌ O'zimga eslatma qolsin", callback_data=f"odam:{tid}:0")])
     await owner(f"👤 «{name}» — Telegram'da qaysi biri?\nBir marta tanlasangiz, keyin o'zim taniyman.",
                 InlineKeyboardMarkup(rows))
 
 
-async def choose(tid, uid):
+def wait_username(tid, name):
+    PENDING.clear()
+    PENDING.update({"tid": tid, "name": name, "until": now_tz() + timedelta(minutes=30)})
+
+
+async def try_resolve_text(text):
+    """Egasi username/raqam yozgan bo'lsa — odamni bog'laydi. Javob matni yoki None."""
+    if not PENDING or now_tz() > PENDING["until"]:
+        PENDING.clear()
+        return None
+    t = text.strip()
+    if not (t.startswith("@") or "t.me/" in t or (sum(ch.isdigit() for ch in t) >= 9 and len(t) <= 25)):
+        return None
+    tid = PENDING["tid"]
+    try:
+        info = await UB.resolve(t)
+    except ValueError as e:
+        return f"⚠️ {e}"
+    PENDING.clear()
+    return await choose(tid, info["id"], info)
+
+
+async def choose(tid, uid, info=None):
     """Egasi odamni tanladi. Natija matnini qaytaradi."""
     task = await db.get_task(tid)
     if not task:
         return "Bu vazifa endi yo'q."
     if uid == 0:
         return f"Mayli. «{task['title']}» ni sizga eslatib turaman."
-    info = await UB.get_user(uid)
+    info = info or await UB.get_user(uid)
     name = task.get("odam_ism") or info["name"]
     pid = await db.upsert_person(uid, name, info["name"], info.get("username"), info.get("phone"))
     # Shu ism bilan kutib turgan boshqa vazifalar ham shu odamga
@@ -137,6 +167,8 @@ async def deliver(t, num):
     elif not t.get("odam_tg"):
         reason = "odam hali tanlanmagan"
     if reason:
+        if t.get("manba") == "sorov":
+            reason += " (bu odamning o'zi eslatishni so'ragan edi)"
         await owner(f"🔔 {num}) {t['title']}\n📤 {who}ga yuborish kerak edi, lekin {reason}.\n\nXabar: {text}",
                     REMINDER_KB(t["id"]))
         if reason == "odam hali tanlanmagan" and UB and UB.connected:
@@ -149,6 +181,14 @@ async def deliver(t, num):
         log.exception("Odamga yuborishda xato: %s", e)
         await owner(f"⚠️ {who}ga yuborib bo'lmadi ({e.__class__.__name__}).\n🔔 {num}) {t['title']}",
                     REMINDER_KB(t["id"]))
+        return
+    if t.get("manba") == "sorov":
+        # O'zi so'ragan eslatma — javobini kuzatmaymiz, faqat egasiga xabar
+        sid = await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
+        await db.update_send(sid, holat="eslatildi")
+        if t["kind"] == "once":
+            await db.mark_done(t["id"], izoh="o'zi so'ragan eslatma yuborildi")
+        await owner(f"📤 {who}ga eslatdim (o'zi so'ragan edi): «{msg}»")
         return
     await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{t['id']}")]])
@@ -209,14 +249,83 @@ async def followup_tick():
 
 # ---------- odamning javobi ----------
 
-async def on_message(event):
-    person = await db.get_person_by_tg(event.sender_id)
-    if not person:
-        return  # faqat "Odamlar" ro'yxatidagilar
-    s = await db.open_send_for(person["id"], event.reply_to_msg_id)
-    if not s:
-        return  # bu odamga hozir kutilayotgan vazifa yo'q — shaxsiy yozishmaga tegmaymiz
+def is_cyrillic(text):
+    cyr = len(re.findall(r"[А-Яа-яЁёЎўҚқҒғҲҳ]", text or ""))
+    lat = len(re.findall(r"[A-Za-z]", text or ""))
+    return cyr > lat
 
+
+async def on_message(event):
+    uid = event.sender_id
+    text = (event.message.message or "").strip()
+
+    # 1) Davom etayotgan eslatma so'rovi suhbati
+    req = REQUESTS.get(uid)
+    if req and now_tz() < req["until"] and text:
+        await handle_request(event, text)
+        return
+    REQUESTS.pop(uid, None)
+
+    # 2) Biz yuborgan vazifaga javob
+    person = await db.get_person_by_tg(uid)
+    s = await db.open_send_for(person["id"], event.reply_to_msg_id) if person else None
+    if s:
+        await handle_reply(event, person, s)
+        return
+
+    # 3) Yangi so'rov: "...eslatib qo'ying"
+    if text and REMIND_RE.search(text):
+        await handle_request(event, text)
+
+
+async def handle_request(event, text):
+    uid = event.sender_id
+    sender = await event.get_sender()
+    if getattr(sender, "bot", False):
+        return
+    name = " ".join(x for x in [getattr(sender, "first_name", None), getattr(sender, "last_name", None)] if x) or "odam"
+    req = REQUESTS.setdefault(uid, {"dialog": [], "kiril": is_cyrillic(text)})
+    req["dialog"].append(("u", text))
+    req["until"] = now_tz() + timedelta(minutes=30)
+    try:
+        r = await asyncio.to_thread(ai.analyze_request, req["dialog"], name,
+                                    now_tz().strftime("%Y-%m-%d %H:%M (%A)"))
+    except Exception as e:  # noqa: BLE001
+        log.exception("So'rovni tahlil qilib bo'lmadi: %s", e)
+        REQUESTS.pop(uid, None)
+        await owner(f"💬 {name} sizdan eslatma so'radi, lekin AI tushuna olmadi:\n«{text}»")
+        return
+    if not r.get("sorov"):
+        REQUESTS.pop(uid, None)
+        return
+    alifbo = "kiril" if req["kiril"] else "lotin"
+    if not r.get("tayyor"):
+        q = r.get("savol") or "Qaysi kuni soat nechada eslatay?"
+        req["dialog"].append(("men", q))
+        await _reply(event, for_person(q, alifbo))
+        return
+
+    REQUESTS.pop(uid, None)
+    existed = await db.get_person_by_tg(uid)
+    if existed:
+        pid, name = existed["id"], existed["ism"]
+        alifbo = existed.get("alifbo") or alifbo
+    else:
+        pid = await db.upsert_person(uid, name, name, getattr(sender, "username", None),
+                                     getattr(sender, "phone", None))
+        await db.set_alifbo(pid, alifbo)  # o'zi qaysi yozuvda yozgan bo'lsa, shunda javob beramiz
+    nxt = triggers.next_fire(r["kind"], r["trigger"])
+    tid = await db.add_task(r.get("title") or f"{name} — eslatma", r["kind"], r["trigger"],
+                            r.get("human_time") or "", nxt, odam_id=pid, odam_ism=name,
+                            xabar_matni=r.get("xabar") or None, manba="sorov")
+    await _reply(event, for_person(r.get("javob") or "Xo'p, eslataman.", alifbo))
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Bekor qilish", callback_data=f"del:{tid}")]])
+    await owner(f"🙋 {name} sizdan eslatishni so'radi — qabul qildim:\n"
+                f"«{r.get('xabar') or r.get('title')}»\n🕒 {r.get('human_time')} ({when_text(nxt)})", kb)
+    log.info("So'rov qabul qilindi: odam=%s vazifa=%s", pid, tid)
+
+
+async def handle_reply(event, person, s):
     m = event.message
     audio, mime, kind, text = None, "audio/ogg", "matn", (m.message or "").strip()
     if m.voice or m.audio or m.video_note:

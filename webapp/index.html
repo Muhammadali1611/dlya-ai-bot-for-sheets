@@ -237,10 +237,13 @@ function renderNext() {
   const d = new Date(up.next_at), ms = d - now, p = leftParts(ms);
   title.textContent = `${up.num}) ${up.title}`;
   clock.hidden = false;
-  clock.innerHTML = (p.d ? `${p.d}<span class="u">kun</span>` : "") + `${pad(p.h)}:${pad(p.m)}<span class="u">:${pad(p.s)}</span>`;
+  clock.innerHTML = (p.d ? `${p.d}<span class="u">kun</span>` : "")
+    + (p.d || p.h ? `${p.h}<span class="u">soat</span>` : "")
+    + `${p.m}<span class="u">daq</span>`
+    + (!p.d && !p.h ? `${pad(p.s)}<span class="u">son</span>` : "");
   const tom = dayKey(new Date(now.getTime() + 864e5));
   const day = dayKey(d) === dayKey(now) ? "Bugun" : dayKey(d) === tom ? "Ertaga" : dm(d);
-  when.textContent = `${day}, ${hm(d)}. ${up.human_time}`;
+  when.textContent = `qoldi · ${day} soat ${hm(d)} da. ${up.human_time}`;
   if (ms < 3600e3) box.classList.add("is-soon");
 }
 

@@ -71,6 +71,33 @@
   .hist .row { cursor: default; grid-template-columns: 1fr auto; }
   .hist .row .left { font-size: 15px; color: var(--hint); font-family: inherit; }
 
+  .row .who { display: block; font-size: 13px; color: var(--accent); margin-top: 1px; }
+  .row .who.pending { color: var(--soon); }
+
+  /* Odamlar bo'limi */
+  .card { background: var(--bg); margin-top: 18px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card p { margin: 0 0 10px; color: var(--hint); font-size: 14px; }
+  .card .ok { color: var(--ok); font-weight: 600; }
+  .field { display: flex; gap: 8px; margin-top: 8px; }
+  .field input { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 10px 12px; background: var(--bg2); color: var(--text); font: inherit; }
+  .btn { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: var(--accent-text); font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: var(--bg2); color: var(--text); font-weight: 500; }
+  .btn.danger { background: transparent; color: var(--late); padding: 6px 0; font-weight: 500; }
+  .person { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--sep); }
+  .person:last-child { border-bottom: 0; }
+  .person .h { display: block; font-size: 13px; color: var(--hint); }
+  .abc { display: flex; background: var(--bg2); border-radius: 8px; padding: 2px; }
+  .abc button { border: 0; background: transparent; padding: 5px 9px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .abc button[aria-pressed="true"] { background: var(--bg); font-weight: 600; }
+  .send { padding: 11px 16px; border-bottom: 1px solid var(--sep); }
+  .send:last-child { border-bottom: 0; }
+  .send .top { display: flex; justify-content: space-between; gap: 8px; font-weight: 500; }
+  .send .st { font-size: 13px; white-space: nowrap; color: var(--hint); }
+  .send .st.good { color: var(--ok); } .send .st.bad { color: var(--late); } .send .st.wait { color: var(--soon); }
+  .send .m { font-size: 14px; margin-top: 3px; }
+  .send .r { font-size: 14px; margin-top: 4px; color: var(--hint); }
+
   .empty-state { text-align: center; color: var(--hint); padding: 40px 24px; }
   .err { margin: 16px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--late) 12%, var(--bg)); color: var(--late); }
 
@@ -102,6 +129,7 @@
 
 <div class="seg" role="tablist">
   <button role="tab" aria-selected="true" data-tab="tasks">Vazifalar</button>
+  <button role="tab" aria-selected="false" data-tab="people">Odamlar</button>
   <button role="tab" aria-selected="false" data-tab="history">Bajarilganlar</button>
 </div>
 
@@ -192,7 +220,7 @@ function renderTasks() {
     return `<section class="group ${g}"><h2>${name}, ${items.length} ta</h2><div class="list">${items.map(t => `
       <button class="row ${state(t, now)} ${t.status === "bitdi" ? "done-cycle" : ""}" data-id="${t.id}">
         <span class="n">${t.num}</span>
-        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " (bitguncha)" : ""}</span></span>
+        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " (bitguncha)" : ""}</span>${t.odam ? `<span class="who ${t.odam_tanlangan ? "" : "pending"}">→ ${esc(t.odam)}${t.odam_tanlangan ? "" : " (odam tanlanmagan)"}</span>` : ""}</span>
         <span class="left" data-left="${t.id}">${esc(rowRight(t, now))}</span>
       </button>`).join("")}</div></section>`;
   }).join("");
@@ -229,6 +257,64 @@ async function renderHistory() {
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
+let loginStep = "phone";
+async function renderPeople() {
+  const main = document.getElementById("main");
+  main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
+  try {
+    const [st, { people }, { sends }] = await Promise.all([api("/api/tg/status"), api("/api/people"), api("/api/sends")]);
+    let acc;
+    if (!st.configured) acc = `<h3>Akkaunt</h3><p>Railway'da TG_API_ID va TG_API_HASH qo'yilmagan.</p>`;
+    else if (st.connected) acc = `<h3>Akkaunt</h3><p><span class="ok">Ulangan:</span> ${esc(st.name || "")} ${esc(st.phone || "")}<br>Odamlarga xabar shu akkauntdan boradi.</p>
+      <button class="btn danger" id="tgLogout">Akkauntni uzish</button>`;
+    else acc = `<h3>Akkauntni ulash</h3>
+      <p>${loginStep === "phone" ? "Odamlarga sizning nomingizdan yozish uchun Telegram raqamingizni kiriting." :
+          loginStep === "code" ? "Telegram ilovasiga kod keldi. Shu yerga kiriting (chatga yozmang)." :
+          "Akkauntingizda ikki bosqichli parol bor. Uni kiriting."}</p>
+      <form class="field" id="tgForm">
+        <input id="tgInput" ${loginStep === "password" ? 'type="password"' : 'inputmode="tel"'} autocomplete="off"
+          placeholder="${loginStep === "phone" ? "+998 90 123 45 67" : loginStep === "code" ? "Kod" : "Parol"}">
+        <button class="btn" type="submit">${loginStep === "phone" ? "Kod olish" : "Ulash"}</button>
+      </form>`;
+    const ppl = people.length ? `<div class="list">${people.map(p => `
+      <div class="person" data-pid="${p.id}">
+        <span>${esc(p.ism)}<span class="h">${esc(p.tg_ism || "")}${p.username ? " · @" + esc(p.username) : ""} · ${p.vazifa_soni} ta vazifa</span></span>
+        <span class="abc" role="group" aria-label="Yozuv">
+          <button data-abc="kiril" aria-pressed="${p.alifbo === "kiril"}">Кирилл</button>
+          <button data-abc="lotin" aria-pressed="${p.alifbo === "lotin"}">Lotin</button>
+        </span>
+      </div>`).join("")}</div>`
+      : `<p class="empty-state">Hali odam yo'q. Botga yozing: «Abbosxon akaga har 3 kunda laminat omborni tekshirishni ayt».</p>`;
+    const cls = h => ["bajarildi", "kochirildi"].includes(h) ? "good" : ["javobsiz", "oqilmadi"].includes(h) ? "bad" : ["yuborildi", "soraldi"].includes(h) ? "wait" : "";
+    const snd = sends.length ? `<section class="group"><h2>Yuborilgan xabarlar</h2><div class="list">${sends.map(x => {
+      const d = new Date(x.yuborilgan_at);
+      return `<div class="send"><div class="top"><span>${esc(x.odam || "")}</span><span class="st ${cls(x.holat)}">${esc(x.holat_uz)}${x.oqilgan && x.holat === "yuborildi" ? ", o'qidi" : ""}</span></div>
+        <div class="m">${esc(x.matn)}</div>
+        ${x.javob ? `<div class="r">${x.javob_turi === "ovoz" ? "🎤 " : ""}«${esc(x.javob)}»</div>` : ""}
+        <div class="r">${dm(d)}, ${hm(d)}</div></div>`;
+    }).join("")}</div></section>` : "";
+    main.innerHTML = `<section class="card">${acc}</section>
+      <section class="group"><h2>Odamlar</h2>${ppl}</section>${snd}`;
+  } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+
+document.getElementById("main").addEventListener("submit", async e => {
+  if (e.target.id !== "tgForm") return;
+  e.preventDefault();
+  const v = document.getElementById("tgInput").value.trim(); if (!v) return;
+  const btn = e.target.querySelector("button"); btn.disabled = true;
+  try {
+    if (loginStep === "phone") { await api("/api/tg/code", { method: "POST", body: JSON.stringify({ phone: v }) }); loginStep = "code"; }
+    else if (loginStep === "code") {
+      const { result } = await api("/api/tg/login", { method: "POST", body: JSON.stringify({ code: v }) });
+      loginStep = result === "password" ? "password" : "phone";
+      if (result === "ok") toast("Akkaunt ulandi ✅");
+    } else { await api("/api/tg/password", { method: "POST", body: JSON.stringify({ password: v }) }); loginStep = "phone"; toast("Akkaunt ulandi ✅"); }
+  } catch (err) { toast(err.message); }
+  btn.disabled = false;
+  renderPeople();
+});
+
 function render() { renderNext(); if (tab === "tasks") renderTasks(); }
 
 async function load() {
@@ -262,6 +348,19 @@ function ask(t) {
 }
 
 document.getElementById("main").addEventListener("click", async e => {
+  const abc = e.target.closest("[data-abc]");
+  if (abc) {
+    const pid = abc.closest("[data-pid]").dataset.pid;
+    try { await api(`/api/people/${pid}/alifbo`, { method: "POST", body: JSON.stringify({ alifbo: abc.dataset.abc }) });
+      toast(abc.dataset.abc === "kiril" ? "Endi kirillcha yuboriladi" : "Endi lotincha yuboriladi"); renderPeople(); }
+    catch (err) { toast(err.message); }
+    return;
+  }
+  if (e.target.id === "tgLogout") {
+    if (!confirm("Akkaunt uzilsinmi? Odamlarga xabar yuborish to'xtaydi.")) return;
+    try { await api("/api/tg/logout", { method: "POST" }); toast("Akkaunt uzildi"); renderPeople(); } catch (err) { toast(err.message); }
+    return;
+  }
   const row = e.target.closest(".row[data-id]"); if (!row) return;
   const t = tasks.find(x => x.id == row.dataset.id); if (!t) return;
   const act = await ask(t); if (!act) return;
@@ -280,7 +379,7 @@ document.querySelector(".seg").addEventListener("click", e => {
   const b = e.target.closest("button[data-tab]"); if (!b) return;
   tab = b.dataset.tab;
   document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-selected", x === b));
-  tab === "tasks" ? renderTasks() : renderHistory();
+  tab === "tasks" ? renderTasks() : tab === "people" ? renderPeople() : renderHistory();
 });
 
 document.getElementById("addForm").addEventListener("submit", async e => {

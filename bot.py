@@ -28,6 +28,8 @@ import db
 import ai
 import triggers
 import webapp
+import kuzatuv
+from userbot import UserBot
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -43,6 +45,7 @@ CHECK_EVERY = int(os.environ.get("CHECK_EVERY", "30"))  # soniya
 MORNING_AT = os.environ.get("MORNING_AT", "07:30")  # ertalabki xulosa vaqti ("off" — o'chiq)
 
 HISTORY = deque(maxlen=int(os.environ.get("HISTORY_LEN", "8")))
+UB = UserBot()
 TG_LIMIT = 4000
 
 WELCOME = (
@@ -52,7 +55,8 @@ WELCOME = (
     "• har oyning birinchi dushanbasi ishchilar bilan majlis\n"
     "• ertaga 10:00 bankka bor\n"
     "• har 3 kunda 11:00 omborni tekshir\n"
-    "• bitmaguncha har kuni 8:00 da elevator ishini eslat\n\n"
+    "• bitmaguncha har kuni 8:00 da elevator ishini eslat\n"
+    "• Abbosxon akaga har 3 kunda laminat omborni tekshirishni ayt\n\n"
     "«Bugun nima ishlarim bor?» deb so'rasangiz ham bo'ladi.\n\n"
     "Bajarganingizda: eslatma ostidagi ✅ tugmasi yoki «3 bitdi»\n"
     "Ro'yxat: /list  •  Ilova: pastdagi «📋 Vazifalar» tugmasi"
@@ -116,7 +120,9 @@ def list_text(tasks):
     for t in tasks:
         mark = {"bitdi": "✅", "pauza": "⏸"}.get(t["status"], "⏳")
         left = f" — {mark} {t['left']}" if t["left"] else ""
-        lines.append(f"{t['num']}) {t['title']} — {t['human_time']}{left}")
+        who = t.get("odam") or t.get("odam_ism")
+        who = f" → {who}" if who and who.lower() not in t["title"].lower() else ""
+        lines.append(f"{t['num']}) {t['title']}{who} — {t['human_time']}{left}")
     return ("\U0001F4CB Vazifalaringiz:\n" + "\n".join(lines)
             + "\n\nBajarganingizda: «<raqam> bitdi»")
 
@@ -150,11 +156,19 @@ async def create_tasks(items):
             nxt = next_fire(r["kind"], r["trigger"])
             if nxt is None:
                 raise ValueError("vaqti o'tib ketgan")
+            kimga = (r.get("kimga") or "").strip() or None
+            known = await kuzatuv.match_known(kimga) if kimga else None
             tid = await db.add_task(
                 r["title"], r["kind"], r["trigger"], r.get("human_time", ""), nxt,
                 bitguncha=bool(r.get("bitguncha")),
+                odam_id=known["id"] if known else None, odam_ism=kimga,
+                xabar_matni=(r.get("xabar") or "").strip() or None,
             )
             created.append(tid)
+            if kimga and not known:
+                # Javob xabaridan keyin "qaysi odam?" deb so'raymiz
+                asyncio.get_running_loop().call_later(
+                    1.5, lambda t=tid, n=kimga: asyncio.ensure_future(kuzatuv.ask_choose(t, n)))
             log.info("Yangi vazifa id=%s: %s (%s)", tid, r["title"], r.get("human_time"))
         except Exception as e:  # noqa: BLE001
             log.exception("Vazifa yaratishda xato: %s", e)
@@ -271,6 +285,12 @@ async def fire_due(bot):
         if not await db.claim_fire(t["id"], old, new):
             continue  # boshqa jarayon allaqachon yubordi
         num = next((x["num"] for x in await db.list_tasks() if x["id"] == t["id"]), "?")
+        if t.get("odam_id") or t.get("odam_ism"):
+            try:
+                await kuzatuv.deliver(t, num)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Odamga yuborishda xato (id=%s): %s", t["id"], e)
+            continue
         late = (now - old).total_seconds() > 600
         text = (
             f"\U0001F514 {num}) {t['title']}\n"
@@ -330,6 +350,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer()
         return
     base = (q.message.text or "") if q.message else ""
+    if parts[0] == "odam" and len(parts) > 2:
+        try:
+            msg = await kuzatuv.choose(tid, int(parts[2]))
+        except Exception as e:  # noqa: BLE001
+            log.exception("Odam tanlashda xato: %s", e)
+            msg = "⚠️ Odamni saqlab bo'lmadi, qayta urinib ko'ring."
+        await q.answer()
+        if q.message:
+            await q.edit_message_text(base + "\n\n" + msg)
+        return
     if parts[0] == "done":
         r = await db.mark_done(tid)
         await q.answer("Bajarildi ✅" if r else "Bu vazifa endi yo'q")
@@ -378,9 +408,13 @@ async def scheduler_loop(bot):
     start = now_tz()
     # Bot xulosa vaqtidan keyin yonsa — bugungisi allaqachon yuborilgan deb hisoblaymiz
     last_digest = start.date() if start.strftime("%H:%M") >= MORNING_AT else None
+    tick = 0
     while True:
+        tick += 1
         try:
             await fire_due(bot)
+            if tick % 2 == 0:  # har daqiqada
+                await kuzatuv.followup_tick()
             now = now_tz()
             if MORNING_AT != "off" and last_digest != now.date() and now.strftime("%H:%M") >= MORNING_AT:
                 last_digest = now.date()
@@ -422,14 +456,23 @@ async def main():
         except Exception as e:  # noqa: BLE001
             log.warning("Menyu tugmasini qo'yib bo'lmadi: %s", e)
 
-    runner = await webapp.start(handle_text, ai_error_text, port=int(os.environ.get("PORT", "8080")))
+    kuzatuv.init(app.bot, UB, reminder_kb)
+    try:
+        await UB.start()
+    except Exception as e:  # noqa: BLE001
+        log.exception("Userbot ishga tushmadi: %s", e)
+
+    runner = await webapp.start(handle_text, ai_error_text, port=int(os.environ.get("PORT", "8080")),
+                                ub=UB, bot=app.bot)
     sched = asyncio.create_task(scheduler_loop(app.bot))
-    log.info("Bot tayyor. AI: %s. Mini App: %s", ai.provider(), url or "(manzil yo'q)")
+    log.info("Bot tayyor. AI: %s. Mini App: %s. Userbot: %s", ai.provider(), url or "(manzil yo'q)",
+             "ulangan" if UB.connected else "ulanmagan")
 
     try:
         await asyncio.Event().wait()
     finally:
         sched.cancel()
+        await UB.stop()
         await runner.cleanup()
         await app.updater.stop()
         await app.stop()

@@ -23,7 +23,12 @@ TZ = ZoneInfo(os.environ.get("TZ", "Asia/Tashkent"))
 _pool = None
 
 COLS = """id, title, kind, trigger, human_time, next_at, status, bitguncha,
-          odam_id, xabar_matni, last_fired_at, created_at"""
+          odam_id, odam_ism, xabar_matni, last_fired_at, created_at"""
+# Vazifa + biriktirilgan odam (ismi, telegram id, alifbosi)
+TASK_SELECT = """select v.id, v.title, v.kind, v.trigger, v.human_time, v.next_at, v.status,
+       v.bitguncha, v.odam_id, v.odam_ism, v.xabar_matni, v.last_fired_at, v.created_at,
+       o.ism as odam, o.tg_user_id as odam_tg, o.alifbo as odam_alifbo
+  from eslatma.vazifalar v left join eslatma.odamlar o on o.id = v.odam_id"""
 
 
 def _candidate_dsns():
@@ -114,7 +119,7 @@ def _decorate(rows):
 # ---------- o'qish ----------
 
 async def list_tasks():
-    rows = await _pool.fetch(f"select {COLS} from eslatma.vazifalar order by id")
+    rows = await _pool.fetch(f"{TASK_SELECT} order by v.id")
     return _decorate(rows)
 
 
@@ -127,9 +132,9 @@ async def get_task(tid):
 
 async def due_tasks(now):
     rows = await _pool.fetch(
-        f"""select {COLS} from eslatma.vazifalar
-            where next_at is not null and next_at <= $1 and status <> 'pauza'
-            order by next_at""",
+        f"""{TASK_SELECT}
+            where v.next_at is not null and v.next_at <= $1 and v.status <> 'pauza'
+            order by v.next_at""",
         now,
     )
     return [_row(r) for r in rows]
@@ -145,12 +150,13 @@ async def history(limit=100):
 # ---------- yozish ----------
 
 async def add_task(title, kind, trigger, human_time, next_at, bitguncha=False,
-                   status="faol"):
+                   status="faol", odam_id=None, odam_ism=None, xabar_matni=None):
     return await _pool.fetchval(
-        """insert into eslatma.vazifalar (title, kind, trigger, human_time, next_at, bitguncha, status)
-           values ($1, $2, $3::jsonb, $4, $5, $6, $7) returning id""",
+        """insert into eslatma.vazifalar
+             (title, kind, trigger, human_time, next_at, bitguncha, status, odam_id, odam_ism, xabar_matni)
+           values ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10) returning id""",
         title, kind, json.dumps(trigger, ensure_ascii=False), human_time, next_at,
-        bitguncha, status,
+        bitguncha, status, odam_id, odam_ism, xabar_matni,
     )
 
 
@@ -168,6 +174,11 @@ async def mark_done(tid, izoh=None):
         await c.execute(
             "insert into eslatma.tarix (vazifa_id, title, human_time, izoh) values ($1, $2, $3, $4)",
             tid, r["title"], r["human_time"], izoh)
+        # Shu vazifa bo'yicha javob kutilayotgan xabarlar ham yopiladi
+        await c.execute(
+            """update eslatma.yuborishlar set holat = 'bajarildi'
+               where vazifa_id = $1 and holat in ('yuborildi', 'soraldi', 'oqilmadi', 'javob', 'javobsiz')""",
+            tid)
         if r["kind"] == "once" or r["bitguncha"]:
             await c.execute("delete from eslatma.vazifalar where id = $1", tid)
         else:
@@ -205,3 +216,131 @@ async def monthly_reset():
         "update eslatma.vazifalar set status = 'faol', updated_at = now() "
         "where status = 'bitdi' and kind in ('recurring', 'interval')")
     return int(res.split()[-1])
+
+
+async def set_task_person(tid, odam_id):
+    await _pool.execute(
+        "update eslatma.vazifalar set odam_id = $2, updated_at = now() where id = $1", tid, odam_id)
+
+
+# ---------- odamlar ----------
+
+async def list_people():
+    rows = await _pool.fetch(
+        """select o.*, (select count(*) from eslatma.vazifalar v where v.odam_id = o.id) as vazifa_soni
+           from eslatma.odamlar o order by o.ism""")
+    return [dict(r) for r in rows]
+
+
+async def get_person(pid):
+    r = await _pool.fetchrow("select * from eslatma.odamlar where id = $1", pid)
+    return dict(r) if r else None
+
+
+async def get_person_by_tg(tg_user_id):
+    r = await _pool.fetchrow("select * from eslatma.odamlar where tg_user_id = $1", tg_user_id)
+    return dict(r) if r else None
+
+
+async def upsert_person(tg_user_id, ism, tg_ism=None, username=None, telefon=None):
+    """Telegram ID bo'yicha odamni yaratadi yoki yangilaydi; id qaytaradi."""
+    return await _pool.fetchval(
+        """insert into eslatma.odamlar (tg_user_id, ism, tg_ism, username, telefon)
+           values ($1, $2, $3, $4, $5)
+           on conflict (tg_user_id) do update
+             set ism = excluded.ism, tg_ism = excluded.tg_ism,
+                 username = coalesce(excluded.username, eslatma.odamlar.username),
+                 telefon = coalesce(excluded.telefon, eslatma.odamlar.telefon)
+           returning id""",
+        tg_user_id, ism, tg_ism, username, telefon)
+
+
+async def set_alifbo(pid, alifbo):
+    await _pool.execute("update eslatma.odamlar set alifbo = $2 where id = $1", pid, alifbo)
+
+
+async def delete_person(pid):
+    return await _pool.fetchval("delete from eslatma.odamlar where id = $1 returning id", pid)
+
+
+# ---------- yuborishlar (odamlarga ketgan xabarlar) ----------
+
+async def add_send(vazifa_id, odam_id, matn, tg_msg_id, tg_chat_id, vazifa_title=None):
+    async with _pool.acquire() as c, c.transaction():
+        # Shu vazifa bo'yicha oldingi javobsiz xabar endi kuzatilmaydi
+        await c.execute(
+            """update eslatma.yuborishlar set holat = 'almashdi'
+               where vazifa_id = $1 and holat in ('yuborildi', 'soraldi', 'oqilmadi', 'javob', 'javobsiz')""", vazifa_id)
+        return await c.fetchval(
+            """insert into eslatma.yuborishlar (vazifa_id, odam_id, matn, tg_msg_id, tg_chat_id, vazifa_title)
+               values ($1, $2, $3, $4, $5, $6) returning id""",
+            vazifa_id, odam_id, matn, tg_msg_id, tg_chat_id, vazifa_title)
+
+
+SEND_SELECT = """select y.*, o.ism as odam, o.alifbo, coalesce(v.title, y.vazifa_title) as title,
+       v.kind, v.trigger, v.human_time
+  from eslatma.yuborishlar y
+  left join eslatma.odamlar o on o.id = y.odam_id
+  left join eslatma.vazifalar v on v.id = y.vazifa_id"""
+
+
+async def open_sends():
+    """Javob kutilayotgan xabarlar (oxirgi 3 kun)."""
+    rows = await _pool.fetch(
+        f"""{SEND_SELECT}
+            where y.holat in ('yuborildi', 'soraldi', 'oqilmadi') and y.yuborilgan_at > now() - interval '3 days'
+            order by y.yuborilgan_at""")
+    return [_send(r) for r in rows]
+
+
+async def open_send_for(odam_id, reply_to_msg=None):
+    """Odamning javobi qaysi xabarga tegishli: reply qilingan bo'lsa o'sha, aks holda oxirgisi."""
+    if reply_to_msg:
+        r = await _pool.fetchrow(
+            f"{SEND_SELECT} where y.odam_id = $1 and y.tg_msg_id = $2 order by y.id desc limit 1",
+            odam_id, reply_to_msg)
+        if r:
+            return _send(r)
+    r = await _pool.fetchrow(
+        f"""{SEND_SELECT}
+            where y.odam_id = $1 and y.holat in ('yuborildi', 'soraldi', 'oqilmadi', 'javob', 'javobsiz')
+              and y.yuborilgan_at > now() - interval '3 days'
+            order by y.yuborilgan_at desc limit 1""", odam_id)
+    return _send(r) if r else None
+
+
+def _send(r):
+    d = dict(r)
+    t = d.get("trigger")
+    d["trigger"] = json.loads(t) if isinstance(t, str) else (t or {})
+    return d
+
+
+async def update_send(sid, **fields):
+    if not fields:
+        return
+    keys = list(fields)
+    sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(keys))
+    vals = [json.dumps(v, ensure_ascii=False) if k == "ai_qaror" else v for k, v in fields.items()]
+    await _pool.execute(f"update eslatma.yuborishlar set {sets} where id = $1", sid, *vals)
+
+
+async def recent_sends(limit=50):
+    rows = await _pool.fetch(f"{SEND_SELECT} order by y.yuborilgan_at desc limit $1", limit)
+    return [_send(r) for r in rows]
+
+
+# ---------- sozlamalar ----------
+
+async def get_setting(kalit):
+    return await _pool.fetchval("select qiymat from eslatma.sozlamalar where kalit = $1", kalit)
+
+
+async def set_setting(kalit, qiymat):
+    if qiymat is None:
+        await _pool.execute("delete from eslatma.sozlamalar where kalit = $1", kalit)
+        return
+    await _pool.execute(
+        """insert into eslatma.sozlamalar (kalit, qiymat) values ($1, $2)
+           on conflict (kalit) do update set qiymat = excluded.qiymat, updated_at = now()""",
+        kalit, qiymat)

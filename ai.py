@@ -120,6 +120,8 @@ TOOL = {
                         "trigger": {"type": "object", "description": "Qoidalarga mos vaqt jadvali"},
                         "human_time": {"type": "string", "description": "O'qishga qulay vaqt, masalan: Har oyning 1-dushanbasi 9:00"},
                         "bitguncha": {"type": "boolean", "description": "true — 'bitmaguncha/bitguncha har kuni' kabi: bajarildi deyilganda butunlay yopiladi"},
+                        "kimga": {"type": "string", "description": "Vazifa boshqa odamga yuborilsa — uning ismi ('Abbosxon aka'). O'zimga bo'lsa bo'sh."},
+                        "xabar": {"type": "string", "description": "kimga bo'lsa — o'sha odamga boradigan tayyor, hurmatli, qisqa xabar (lotin)."},
                     },
                     "required": ["title", "kind", "trigger", "human_time"],
                 },
@@ -163,6 +165,20 @@ Sen har bir xabarga `javob_berish` asbobini AYNAN BIR MARTA chaqirib javob beras
   qilib, aniq bitta savol ber.
 - reply har doim samimiy, qisqa va o'zbekcha bo'lsin. Yaratilgan vazifalarni reply'da sanab o't.
 
+## BOSHQA ODAMGA YUBORILADIGAN VAZIFALAR
+Foydalanuvchi "Abbosxon akaga ... desin/eslat/ayt/yubor", "Akmal akaga har kuni ... ni eslatib tur",
+"Ibrohimjon akadan ... ni so'ra" desa — bu vazifa O'SHA ODAMGA foydalanuvchining profilidan yuboriladi:
+- kimga: odamning ismi, murojaat bilan, bosh kelishikda ("Abbosxon aka", "Ibrohimjon aka", "Dilnoza opa").
+- xabar: o'sha odamga boradigan tayyor xabar. Odamga "siz" deb, hurmat bilan, QISQA va ANIQ yoz,
+  ismi bilan boshla. Yoshi kattalar o'qiydi — uzun gap, ortiqcha so'z, emoji ishlatma.
+  Masalan: "Abbosxon aka, laminat ombor xonasining tozaligini ko'rib oling."
+            "Ibrohimjon aka, bugun qaysi agent bilan regionga chiqasiz?"
+- title: foydalanuvchi uchun qisqa nom ("Abbosxon aka — laminat ombor tozaligi").
+- Agar foydalanuvchi o'zi qiladigan ish bo'lsa ("Abbosxon akaga telefon qilishim kerak") — kimga BO'SH,
+  bu oddiy eslatma.
+- Mavjud vazifani odamga biriktirish ("4-vazifani Akmal akaga biriktir") → action "update":
+  eskisini o'chir, yangisini kimga va xabar bilan to'liq yoz.
+
 ## VAQT JADVALI (trigger) QOIDALARI — juda muhim
 
 kind = "once" (bir martalik):
@@ -200,6 +216,8 @@ bitguncha (ixtiyoriy, true/false):
 "har oyning 25-sanasida oylik" → {"kind":"recurring","trigger":{"day":25,"hour":10,"minute":0}}
 "har 3 kunda 11:00 omborni tekshir" → {"kind":"interval","trigger":{"days":3,"start":"<bugun yoki ertaga>T11:00:00"}}
 "ertaga 10 da bank, payshanba 15:00 da Rustam aka bilan uchrashuv" → ikkita "once" vazifa.
+"Abbosxon akaga har 3 kunda laminat ombor xonasini tozaligini ko'rib olishni ayt" →
+  {"title":"Abbosxon aka — laminat ombor tozaligi","kind":"interval","trigger":{"days":3,"start":"<bugun yoki ertaga>T09:00:00"},"human_time":"Har 3 kunda 9:00","kimga":"Abbosxon aka","xabar":"Abbosxon aka, laminat ombor xonasining tozaligini ko'rib oling."}
 "elevator ishi bitmaguncha har kuni 8 da eslat" →
   {"title":"Elevator ishini tekshirish","kind":"recurring","trigger":{"hour":8,"minute":0},"human_time":"Har kuni 8:00 (bitguncha)","bitguncha":true}
 """
@@ -214,7 +232,8 @@ def _render_reminders(reminders):
         lines.append(
             f'№{r["num"]} (id={r["id"]}): "{r["title"]}" — {r["human_time"]} — '
             f'keyingi vaqt: {r.get("next") or "-"} — holati: {r["status"]}'
-            f'{" — bitguncha" if r.get("bitguncha") else ""}{today}'
+            f'{" — bitguncha" if r.get("bitguncha") else ""}'
+            f'{(" — kimga: " + (r.get("odam") or r.get("odam_ism"))) if (r.get("odam") or r.get("odam_ism")) else ""}{today}'
         )
     return "\n".join(lines)
 
@@ -316,7 +335,8 @@ Asbob chaqirish o'rniga FAQAT bitta JSON obyekt qaytar, boshqa hech qanday matn 
 {"action": "create|delete|done|update|list|chat",
  "reply": "<o'zbekcha javob>",
  "reminders_to_create": [{"title": "...", "kind": "once|recurring|interval",
-                          "trigger": {...}, "human_time": "...", "bitguncha": false}],
+                          "trigger": {...}, "human_time": "...", "bitguncha": false,
+                          "kimga": "", "xabar": ""}],
  "ids_to_delete": [<id>], "ids_done": [<id>]}
 Bo'sh ro'yxatlarni ham [] qilib yoz.
 """
@@ -368,36 +388,10 @@ def _understand_gemini(user_text, now_str, reminders, history=None):
     )
 
     def call():
-        from google.genai import errors as gerr
-        now = time.time()
-        models = [m for m in GEMINI_MODELS if _cooldown.get(m, 0) <= now] or GEMINI_MODELS
-        last_err = None
-        for model in models:
-            try:
-                resp = _get_gclient().models.generate_content(
-                    model=model, contents=contents, config=config)
-                return resp.text or ""
-            except gerr.APIError as e:
-                code, txt = getattr(e, "code", 0), str(e).lower()
-                last_err = e
-                if code == 429 or "quota" in txt or "exhausted" in txt:
-                    # minutlik limit bo'lsa tez qaytadi, kunlik bo'lsa uzoqroq dam oladi
-                    wait = 3600 if "day" in txt or "daily" in txt else 90
-                    _cooldown[model] = time.time() + wait
-                    log.warning("%s limitga yetdi, keyingi modelga o'tilmoqda", model)
-                    continue
-                if code in (404, 400) and ("not found" in txt or "not supported" in txt
-                                           or "model" in txt and "key" not in txt):
-                    _cooldown[model] = time.time() + 86400
-                    log.warning("%s mavjud emas, keyingi modelga o'tilmoqda: %s", model, e)
-                    continue
-                if code in (500, 503) or "overloaded" in txt or "unavailable" in txt:
-                    log.warning("%s band (%s), keyingisi sinab ko'rilmoqda", model, code)
-                    continue
-                raise
-        raise last_err
+        return _gemini_generate(contents, config)
 
     raw = call()
+
     try:
         result = _parse_json(raw)
         errors = _validate(result)
@@ -412,3 +406,92 @@ def _understand_gemini(user_text, now_str, reminders, history=None):
                  + "\n".join(errors))]))
         result = _parse_json(call())
     return result
+
+
+def _gemini_generate(contents, config):
+    """Modellarni tartib bilan sinaydi; limit tugasa keyingisiga o'tadi."""
+    from google.genai import errors as gerr
+    now = time.time()
+    models = [m for m in GEMINI_MODELS if _cooldown.get(m, 0) <= now] or GEMINI_MODELS
+    last_err = None
+    for model in models:
+        try:
+            resp = _get_gclient().models.generate_content(
+                model=model, contents=contents, config=config)
+            return resp.text or ""
+        except gerr.APIError as e:
+            code, txt = getattr(e, "code", 0), str(e).lower()
+            last_err = e
+            if code == 429 or "quota" in txt or "exhausted" in txt:
+                # minutlik limit bo'lsa tez qaytadi, kunlik bo'lsa uzoqroq dam oladi
+                wait = 3600 if "day" in txt or "daily" in txt else 90
+                _cooldown[model] = time.time() + wait
+                log.warning("%s limitga yetdi, keyingi modelga o'tilmoqda", model)
+                continue
+            if code in (404, 400) and ("not found" in txt or "not supported" in txt
+                                       or "model" in txt and "key" not in txt):
+                _cooldown[model] = time.time() + 86400
+                log.warning("%s mavjud emas, keyingi modelga o'tilmoqda: %s", model, e)
+                continue
+            if code in (500, 503) or "overloaded" in txt or "unavailable" in txt:
+                log.warning("%s band (%s), keyingisi sinab ko'rilmoqda", model, code)
+                continue
+            raise
+    raise last_err
+
+
+
+# ---------------- Odamning javobini tahlil qilish ----------------
+
+REPLY_RULES = """Sen — Muhammadalining yordamchisisan. U o'z Telegram profilidan bir odamga vazifa yuborgan,
+o'sha odam javob yozdi (matn yoki ovozli xabar). Javobni tushunib, nima bo'lganini aniqla.
+
+Faqat bitta JSON qaytar:
+{"qaror": "bajarildi" | "kochirildi" | "malumot" | "muammo",
+ "matn": "<javob matni; ovozli bo'lsa — eshitganingni so'zma-so'z yoz (asl tilida)>",
+ "yangi_vaqt": "YYYY-MM-DDTHH:MM:00" yoki null,
+ "xulosa": "<Muhammadali uchun 1 jumla, o'zbek lotinida>"}
+
+Qoidalar:
+- bajarildi: ish qilinganini aytdi ("qildim", "bo'ldi", "tayyor", "tekshirdim, toza", "jo'natdim", "ha, gaplashdim").
+- kochirildi: hozir emas, keyinroq qilishini aytdi ("ertaga qilaman", "soat 4 da", "tushdan keyin",
+  "1 soatdan keyin"). yangi_vaqt — HOZIRGI VAQTdan hisoblab aniq sana-vaqt (Toshkent).
+  Vaqt noaniq bo'lsa ("keyinroq") — 2 soatdan keyin; "ertaga" deb vaqtsiz aytsa — ertaga 9:00.
+- muammo: qila olmasligini, to'siq borligini, yordam kerakligini aytdi.
+- malumot: savol berdi, ma'lumot berdi yoki boshqa narsa (ish qilingani aniq emas).
+- Shubha bo'lsa "bajarildi" DEMA — "malumot" qil."""
+
+
+def analyze_reply(task_title, sent_text, reply_text, audio=None, audio_mime="audio/ogg", now_str=""):
+    """Odam javobini tahlil qiladi. Ovozli xabar bo'lsa audio (bytes) beriladi. Faqat Gemini."""
+    from google.genai import types
+
+    ctx = (f"HOZIRGI VAQT (Toshkent): {now_str}\n"
+           f"VAZIFA: {task_title}\n"
+           f"YUBORILGAN XABAR: {sent_text}\n")
+    parts = [types.Part(text=ctx)]
+    if audio:
+        parts.append(types.Part(text="ODAMNING JAVOBI — ovozli xabar:"))
+        parts.append(types.Part.from_bytes(data=audio, mime_type=audio_mime))
+    else:
+        parts.append(types.Part(text=f"ODAMNING JAVOBI: {reply_text}"))
+    config = types.GenerateContentConfig(
+        system_instruction=REPLY_RULES, temperature=0.1, response_mime_type="application/json")
+    raw = _gemini_generate([types.Content(role="user", parts=parts)], config)
+    data = _parse_reply(raw)
+    if not data.get("matn"):
+        data["matn"] = reply_text or ""
+    return data
+
+
+def _parse_reply(raw):
+    text = (raw or "").strip()
+    a, b = text.find("{"), text.rfind("}")
+    if a != -1 and b > a:
+        text = text[a:b + 1]
+    data = json.loads(text)
+    if data.get("qaror") not in ("bajarildi", "kochirildi", "malumot", "muammo"):
+        data["qaror"] = "malumot"
+    if data.get("qaror") == "kochirildi" and not data.get("yangi_vaqt"):
+        data["qaror"] = "malumot"
+    return data

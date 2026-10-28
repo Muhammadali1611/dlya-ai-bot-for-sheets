@@ -12,6 +12,17 @@ Botning pastidagi **📋 Vazifalar** tugmasi Telegram ichida ilova (Mini App) oc
 - Mini App: navbatdagi ish va jonli sanoq, vaqt bo'yicha guruhlar, ✅ / ⏸ / o'chirish,
   oddiy tilda yangi vazifa qo'shish, bajarilganlar tarixi
 
+## Odamlarga sizning nomingizdan yuborish (3-bosqich)
+- "Abbosxon akaga har 3 kunda laminat omborni tekshirishni ayt" — vazifa Abbosxon akaga
+  **sizning Telegram profilingizdan** boradi (kirillcha; Mini App'da har odam uchun lotin ham tanlash mumkin).
+- Birinchi marta bot kontaktlaringizdan "qaysi biri?" deb so'raydi, keyin o'zi taniydi.
+- Odam o'qib 1 soat javob bermasa — xabarga reply qilib so'raydi, 3 soatdan keyin yana;
+  baribir javob bo'lmasa sizga xabar beradi. O'qimasa 6 soatdan keyin aytadi.
+- Javobni (matn yoki ovozli xabar) AI tushunadi: bajarildi → belgilaydi; "ertaga 4 da" → vaqtni
+  ko'chiradi; muammo/savol → sizga yuboradi.
+- Bot faqat "Odamlar" ro'yxatidagilarning, faqat vazifa yuborilgandan keyingi javoblarini ko'radi.
+- Akkaunt Mini App → Odamlar → "Akkauntni ulash" orqali ulanadi. Sessiya bazada shifrlangan.
+
 ## Qanday ishlaydi
 - Vazifaning keyingi vaqti bazada (`next_at`). Bot har 30 soniyada vaqti kelganlarni tekshiradi —
   qayta yonsa ham, Mini App'dan o'zgartirilsa ham hech narsa yo'qolmaydi.
@@ -30,6 +41,9 @@ Bot faqat o'zining `eslatma_bot` login'i bilan ulanadi va boshqa jadvallarga huq
 | OWNER_ID | Egasining Telegram ID si |
 | DB_PASSWORD | `eslatma_bot` login paroli (yoki to'liq `DATABASE_URL`) |
 | TZ | Asia/Tashkent |
+| TG_API_ID, TG_API_HASH | my.telegram.org dan (profildan yuborish uchun) |
+| MORNING_AT | ixtiyoriy, ertalabki xulosa vaqti (standart 07:30, "off" — o'chiq) |
+| FOLLOWUP_MINUTES | ixtiyoriy, qayta so'rash (standart "60,180") |
 
 Mini App manzili Railway'ning public domain'idan avtomatik olinadi (Settings → Networking →
 Generate Domain). Kerak bo'lsa `WEBAPP_URL` bilan qo'lda berish mumkin.
@@ -40,5 +54,8 @@ Generate Domain). Kerak bo'lsa `WEBAPP_URL` bilan qo'lda berish mumkin.
 - `db.py` — Supabase (Postgres) bilan ishlash
 - `triggers.py` — vaqt jadvallari
 - `webapp.py`, `webapp/index.html` — Mini App va uning API'si
-- `schema.sql` — baza tuzilmasi
+- `userbot.py` — sizning akkauntingiz orqali yozish (Telethon)
+- `kuzatuv.py` — odamlarga yuborish, o'qildi/javob kuzatuvi, qayta so'rash
+- `translit.py` — lotin → kirill
+- `schema.sql`, `schema_v3.sql` — baza tuzilmasi
 - `tools/migrate_from_sheets.py` — eski Google Sheets'dan bir martalik ko'chirish

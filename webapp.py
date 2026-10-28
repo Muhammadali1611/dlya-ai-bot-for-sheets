@@ -17,6 +17,7 @@ from aiohttp import web
 
 import db
 import triggers
+import kuzatuv
 
 log = logging.getLogger("reminder-bot.web")
 
@@ -70,6 +71,8 @@ def _task_json(t):
         "next_at": nx.isoformat() if nx else None,
         "run_date": t["trigger"].get("run_date") if t["kind"] == "once" else None,
         "odam": t.get("odam") or t.get("odam_ism"), "odam_tanlangan": bool(t.get("odam_id")),
+        "odam_id": t.get("odam_id"), "xabar": t.get("xabar_matni"),
+        "form": triggers.to_form(t["kind"], t["trigger"]),
     }
 
 
@@ -124,6 +127,92 @@ async def api_pause(request):
     else:
         await db.set_status(tid, "pauza", None)
     return web.json_response({"ok": True})
+
+
+# ---------- forma orqali qo'shish / tahrirlash ----------
+
+async def _form_to_fields(body, old=None):
+    """Forma ma'lumotini tekshirib, bazaga yoziladigan maydonlarni qaytaradi."""
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise ValueError("Vazifa nomini yozing")
+    form = body.get("form") or {}
+    if old and (form.get("tur") == "custom" or form == triggers.to_form(old["kind"], old["trigger"])):
+        kind, trig, human = old["kind"], old["trigger"], old["human_time"]  # jadval o'zgarmadi
+    else:
+        kind, trig, human = triggers.from_form(form)
+    nxt = triggers.next_fire(kind, trig)
+    status = "faol"
+    if old and old["status"] == "pauza":
+        status = "pauza"
+    if kind == "once" and (nxt is None or nxt <= db.datetime.now(db.TZ)):
+        raise ValueError("Bu vaqt allaqachon o'tib ketgan — keyingi vaqtni tanlang")
+    if status == "pauza":
+        nxt = None
+
+    odam_id, odam_ism = body.get("odam_id") or None, (body.get("odam_ism") or "").strip() or None
+    if odam_id:
+        p = await db.get_person(int(odam_id))
+        if not p:
+            raise ValueError("Bu odam topilmadi")
+        odam_id, odam_ism = p["id"], p["ism"]
+    if odam_ism and not odam_id:
+        known = await kuzatuv.match_known(odam_ism)  # oldin tanlangan odam bo'lsa — o'zi taniydi
+        if known:
+            odam_id, odam_ism = known["id"], known["ism"]
+    xabar = (body.get("xabar") or "").strip() or None
+    if (odam_id or odam_ism) and not xabar:
+        x = title[0].lower() + title[1:]
+        if x[-1] not in ".!?":
+            x += " kerak."
+        xabar = f"{odam_ism}, {x}" if odam_ism else x
+    return dict(title=title, kind=kind, trigger=trig, human_time=human, next_at=nxt,
+                bitguncha=bool(body.get("bitguncha")), odam_id=odam_id, odam_ism=odam_ism,
+                xabar_matni=xabar, status=status)
+
+
+async def _after_save(request, tid, fields):
+    if fields["odam_ism"] and not fields["odam_id"]:
+        try:
+            await kuzatuv.ask_choose(tid, fields["odam_ism"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("Odam tanlash so'rovi yuborilmadi: %s", e)
+
+
+async def api_task_get(request):
+    t = await db.get_task(int(request.match_info["tid"]))
+    if not t:
+        return web.json_response({"error": "Vazifa topilmadi"}, status=404)
+    return web.json_response({"task": _task_json(t)})
+
+
+async def api_task_create_form(request):
+    body = await request.json()
+    try:
+        f = await _form_to_fields(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    tid = await db.add_task(f["title"], f["kind"], f["trigger"], f["human_time"], f["next_at"],
+                            bitguncha=f["bitguncha"], odam_id=f["odam_id"], odam_ism=f["odam_ism"],
+                            xabar_matni=f["xabar_matni"])
+    await _after_save(request, tid, f)
+    return web.json_response({"ok": True, "id": tid, "human_time": f["human_time"]})
+
+
+async def api_task_update(request):
+    tid = int(request.match_info["tid"])
+    old = await db.get_task(tid)
+    if not old:
+        return web.json_response({"error": "Vazifa topilmadi"}, status=404)
+    body = await request.json()
+    try:
+        f = await _form_to_fields(body, old)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    await db.update_task(tid, **f)
+    if f["odam_ism"] != (old.get("odam_ism") or old.get("odam")) or f["odam_id"] != old.get("odam_id"):
+        await _after_save(request, tid, f)
+    return web.json_response({"ok": True, "human_time": f["human_time"]})
 
 
 # ---------- akkaunt (userbot) ----------
@@ -259,6 +348,9 @@ def build_app(handle_text=None, err_text=str, ub=None, bot=None):
     app.router.add_post("/api/tasks/{tid:\\d+}/done", api_done)
     app.router.add_post("/api/tasks/{tid:\\d+}/pause", api_pause)
     app.router.add_delete("/api/tasks/{tid:\\d+}", api_delete)
+    app.router.add_get("/api/tasks/{tid:\\d+}", api_task_get)
+    app.router.add_put("/api/tasks/{tid:\\d+}", api_task_update)
+    app.router.add_post("/api/tasks/form", api_task_create_form)
     app.router.add_get("/api/tg/status", api_tg_status)
     app.router.add_post("/api/tg/code", api_tg_code)
     app.router.add_post("/api/tg/login", api_tg_login)

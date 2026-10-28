@@ -6,125 +6,169 @@
 <title>Vazifalar</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: var(--tg-theme-bg-color, #ffffff);
-    --bg2: var(--tg-theme-secondary-bg-color, #f1f2f5);
-    --text: var(--tg-theme-text-color, #15171a);
-    --hint: var(--tg-theme-hint-color, #8a8f98);
-    --accent: var(--tg-theme-button-color, #2f7de1);
-    --accent-text: var(--tg-theme-button-text-color, #ffffff);
-    --sep: color-mix(in srgb, var(--hint) 22%, transparent);
-    --late: #e5484d;
-    --soon: #e8a317;
-    --ok: #30a46c;
+    --bg2: var(--tg-theme-secondary-bg-color, #eef1f6);
+    --text: var(--tg-theme-text-color, #121826);
+    --hint: var(--tg-theme-hint-color, #7b8496);
+    --sep: color-mix(in srgb, var(--hint) 20%, transparent);
+    /* Guruh ranglari — yorqin */
+    --late: #ff3b5c;
+    --today: #2b7fff;
+    --tomorrow: #8b5cf6;
+    --later: #10b981;
+    --pause: #94a3b8;
+    --soon: #ff9f0a;
+    --accent: #2b7fff;
     --num: "Barlow Condensed", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg2); color: var(--text);
-    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    -webkit-tap-highlight-color: transparent; }
-  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
-  button { font: inherit; color: inherit; }
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  button, input, select, textarea { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* Navbatdagi ish */
-  .next { background: var(--bg); padding: 18px 16px 16px; }
-  .next-label { color: var(--hint); font-size: 13px; margin: 0 0 6px; }
-  .next-title { font-size: 17px; font-weight: 600; margin: 0; }
-  .next-clock { font-family: var(--num); font-weight: 600; font-size: 64px; line-height: 1;
-    letter-spacing: .01em; margin: 10px 0 4px; font-variant-numeric: tabular-nums; }
-  .next-clock .u { font-size: 22px; font-weight: 500; color: var(--hint); margin: 0 6px 0 2px; }
-  .next-when { color: var(--hint); font-size: 13px; margin: 0; }
-  .next.is-soon .next-clock { color: var(--soon); }
-  .next.is-late .next-clock { color: var(--late); }
-  .next.empty .next-title { font-weight: 400; color: var(--hint); }
+  /* ---- Navbatdagi ish: rangli blok ---- */
+  .hero { --c: var(--today); background: var(--c); color: #fff; padding: 18px 18px 20px;
+    border-radius: 0 0 22px 22px; transition: background .4s; }
+  .hero.late { --c: var(--late); } .hero.soon { --c: var(--soon); }
+  .hero.tomorrow { --c: var(--tomorrow); } .hero.later { --c: var(--later); } .hero.empty { --c: #64748b; }
+  .hero-label { font-size: 13px; opacity: .85; margin: 0 0 4px; }
+  .hero-title { font-size: 18px; font-weight: 650; margin: 0; line-height: 1.3; }
+  .hero-clock { font-family: var(--num); font-weight: 700; font-size: 58px; line-height: 1; margin: 12px 0 4px;
+    font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+  .hero-clock .u { font-size: 22px; font-weight: 500; opacity: .8; margin: 0 10px 0 3px; }
+  .hero-when { font-size: 13.5px; opacity: .9; margin: 0; }
+  .hero-who { display: inline-block; margin-top: 8px; background: rgba(255,255,255,.2); border-radius: 999px;
+    padding: 3px 10px; font-size: 13px; }
 
-  /* Bo'limlar tugmasi */
-  .seg { display: flex; gap: 4px; margin: 12px 16px 4px; background: var(--sep); padding: 3px; border-radius: 10px; }
-  .seg button { flex: 1; border: 0; background: transparent; padding: 7px 0; border-radius: 8px; cursor: pointer; }
-  .seg button[aria-selected="true"] { background: var(--bg); font-weight: 600; }
+  /* ---- Bo'limlar ---- */
+  .seg { display: flex; gap: 4px; margin: 14px 14px 2px; background: var(--sep); padding: 3px; border-radius: 12px; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 8px 0; border-radius: 9px; cursor: pointer; }
+  .seg button[aria-selected="true"] { background: var(--bg); font-weight: 650; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 
-  /* Ro'yxat */
+  /* ---- Ro'yxat ---- */
   .group { margin-top: 18px; }
-  .group h2 { font-size: 13px; font-weight: 500; color: var(--hint); margin: 0 16px 6px; }
-  .group.late h2 { color: var(--late); }
-  .list { background: var(--bg); }
-  .row { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
-    width: 100%; text-align: left; border: 0; background: none; padding: 11px 16px; cursor: pointer;
+  .group h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; margin: 0 16px 8px; }
+  .group h2::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--gc); }
+  .group h2 .cnt { color: var(--hint); font-weight: 500; }
+  .g-late { --gc: var(--late); } .g-today { --gc: var(--today); } .g-tomorrow { --gc: var(--tomorrow); }
+  .g-later { --gc: var(--later); } .g-pauza { --gc: var(--pause); }
+  .list { margin: 0 12px; background: var(--bg); border-radius: 16px; overflow: hidden; }
+  .row { position: relative; display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: center;
+    width: 100%; text-align: left; border: 0; background: none; padding: 12px 14px 12px 16px; cursor: pointer;
     border-bottom: 1px solid var(--sep); }
+  .row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: var(--gc); }
   .row:last-child { border-bottom: 0; }
   .row:active { background: var(--sep); }
   .row .n { font-family: var(--num); font-size: 18px; color: var(--hint); text-align: right; }
-  .row .t { font-weight: 500; overflow-wrap: anywhere; }
-  .row .h { display: block; font-size: 13px; color: var(--hint); font-weight: 400; margin-top: 1px; }
-  .row .left { font-family: var(--num); font-size: 19px; font-weight: 500; white-space: nowrap;
+  .row .t { font-weight: 550; overflow-wrap: anywhere; }
+  .row .h { display: block; font-size: 13px; color: var(--hint); font-weight: 400; margin-top: 2px; }
+  .row .who { display: inline-block; margin-top: 4px; font-size: 12.5px; font-weight: 550; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 999px; padding: 1px 8px; }
+  .row .who.pending { color: var(--soon); background: color-mix(in srgb, var(--soon) 14%, transparent); }
+  .pill { font-family: var(--num); font-size: 17px; font-weight: 600; white-space: nowrap; color: var(--gc);
+    background: color-mix(in srgb, var(--gc) 13%, transparent); border-radius: 10px; padding: 3px 9px;
     font-variant-numeric: tabular-nums; }
-  .row.soon .left { color: var(--soon); }
-  .row.late .left { color: var(--late); }
-  .row.paused { opacity: .55; }
-  .row.done-cycle .t::after { content: " ✓"; color: var(--ok); }
+  .row.soon .pill { color: #fff; background: var(--soon); }
+  .row.paused { opacity: .6; }
+  .row.done-cycle .t::after { content: " ✓"; color: var(--later); }
   .row.gone { animation: gone .35s ease forwards; }
   @keyframes gone { to { opacity: 0; transform: translateX(24px); } }
 
-  .hist .row { cursor: default; grid-template-columns: 1fr auto; }
-  .hist .row .left { font-size: 15px; color: var(--hint); font-family: inherit; }
+  .hist .row { cursor: default; grid-template-columns: 1fr auto; --gc: var(--later); }
+  .empty-state { text-align: center; color: var(--hint); padding: 40px 24px; }
+  .err { margin: 16px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--late) 12%, var(--bg)); color: var(--late); }
 
-  .row .who { display: block; font-size: 13px; color: var(--accent); margin-top: 1px; }
-  .row .who.pending { color: var(--soon); }
-
-  /* Odamlar bo'limi */
-  .card { background: var(--bg); margin-top: 18px; padding: 14px 16px; }
+  /* ---- Odamlar ---- */
+  .card { background: var(--bg); margin: 16px 12px 0; padding: 14px 16px; border-radius: 16px; }
   .card h3 { margin: 0 0 4px; font-size: 16px; }
   .card p { margin: 0 0 10px; color: var(--hint); font-size: 14px; }
-  .card .ok { color: var(--ok); font-weight: 600; }
+  .card .ok { color: var(--later); font-weight: 650; }
   .field { display: flex; gap: 8px; margin-top: 8px; }
-  .field input { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 10px 12px; background: var(--bg2); color: var(--text); font: inherit; }
-  .btn { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: var(--accent-text); font-weight: 600; cursor: pointer; }
-  .btn.ghost { background: var(--bg2); color: var(--text); font-weight: 500; }
-  .btn.danger { background: transparent; color: var(--late); padding: 6px 0; font-weight: 500; }
-  .person { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--sep); }
+  .inp { width: 100%; min-width: 0; border: 1.5px solid transparent; border-radius: 12px; padding: 11px 12px;
+    background: var(--bg2); color: var(--text); }
+  .inp:focus { border-color: var(--accent); outline: none; }
+  .btn { border: 0; border-radius: 12px; padding: 11px 16px; background: var(--accent); color: #fff; font-weight: 650; cursor: pointer; }
+  .btn:disabled { opacity: .5; }
+  .btn.danger-text { background: transparent; color: var(--late); padding: 6px 0; font-weight: 550; }
+  .person { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--sep); }
   .person:last-child { border-bottom: 0; }
   .person .h { display: block; font-size: 13px; color: var(--hint); }
-  .abc { display: flex; background: var(--bg2); border-radius: 8px; padding: 2px; }
-  .abc button { border: 0; background: transparent; padding: 5px 9px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-  .abc button[aria-pressed="true"] { background: var(--bg); font-weight: 600; }
-  .send { padding: 11px 16px; border-bottom: 1px solid var(--sep); }
+  .abc { display: flex; background: var(--bg2); border-radius: 9px; padding: 2px; }
+  .abc button { border: 0; background: transparent; padding: 5px 9px; border-radius: 7px; font-size: 13px; cursor: pointer; }
+  .abc button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 650; }
+  .send { padding: 12px 16px; border-bottom: 1px solid var(--sep); }
   .send:last-child { border-bottom: 0; }
-  .send .top { display: flex; justify-content: space-between; gap: 8px; font-weight: 500; }
-  .send .st { font-size: 13px; white-space: nowrap; color: var(--hint); }
-  .send .st.good { color: var(--ok); } .send .st.bad { color: var(--late); } .send .st.wait { color: var(--soon); }
-  .send .m { font-size: 14px; margin-top: 3px; }
-  .send .r { font-size: 14px; margin-top: 4px; color: var(--hint); }
+  .send .top { display: flex; justify-content: space-between; gap: 8px; font-weight: 550; }
+  .st { font-size: 12.5px; font-weight: 600; white-space: nowrap; border-radius: 999px; padding: 1px 8px; color: var(--hint); background: var(--bg2); }
+  .st.good { color: var(--later); background: color-mix(in srgb, var(--later) 13%, transparent); }
+  .st.bad { color: var(--late); background: color-mix(in srgb, var(--late) 13%, transparent); }
+  .st.wait { color: var(--soon); background: color-mix(in srgb, var(--soon) 14%, transparent); }
+  .send .m { font-size: 14px; margin-top: 4px; }
+  .send .r { font-size: 13.5px; margin-top: 4px; color: var(--hint); }
 
-  .empty-state { text-align: center; color: var(--hint); padding: 40px 24px; }
-  .err { margin: 16px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--late) 12%, var(--bg)); color: var(--late); }
-
-  /* Qo'shish qatori */
-  .add { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg);
-    border-top: 1px solid var(--sep); padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-    display: flex; gap: 8px; }
-  .add input { flex: 1; min-width: 0; border: 0; border-radius: 20px; padding: 10px 14px;
-    background: var(--bg2); color: var(--text); font: inherit; }
-  .add input::placeholder { color: var(--hint); }
-  .add button { border: 0; border-radius: 20px; padding: 0 16px; background: var(--accent);
-    color: var(--accent-text); font-weight: 600; cursor: pointer; }
-  .add button:disabled { opacity: .5; }
-  .toast { position: fixed; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom));
-    background: var(--text); color: var(--bg); padding: 12px 14px; border-radius: 12px;
-    white-space: pre-line; transform: translateY(12px); opacity: 0; transition: .25s; pointer-events: none; }
+  /* ---- Pastki panel ---- */
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--sep);
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; z-index: 5; }
+  .bar input { flex: 1; min-width: 0; border: 0; border-radius: 22px; padding: 11px 15px; background: var(--bg2); }
+  .bar input::placeholder { color: var(--hint); }
+  .round { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center;
+    font-size: 22px; font-weight: 600; color: #fff; }
+  .round.send-b { background: var(--accent); font-size: 18px; }
+  .round.plus { background: var(--later); }
+  .round:disabled { opacity: .5; }
+  .toast { position: fixed; left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 30;
+    background: #121826; color: #fff; padding: 12px 14px; border-radius: 14px; white-space: pre-line;
+    transform: translateY(12px); opacity: 0; transition: .25s; pointer-events: none; }
   .toast.on { transform: none; opacity: 1; }
 
-  @media (prefers-reduced-motion: reduce) { .row.gone { animation: none; opacity: 0; } .toast { transition: none; } }
+  /* ---- Tahrirlash oynasi ---- */
+  .shade { position: fixed; inset: 0; background: rgba(10,15,30,.45); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 10; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; background: var(--bg); border-radius: 22px 22px 0 0;
+    max-height: 92vh; overflow-y: auto; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+    transform: translateY(105%); transition: transform .25s cubic-bezier(.2,.8,.2,1); }
+  .open .shade { opacity: 1; pointer-events: auto; }
+  .open .sheet { transform: none; }
+  .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--sep); margin: 4px auto 10px; }
+  .sheet h3 { margin: 0 0 12px; font-size: 19px; }
+  .lbl { display: block; font-size: 13px; font-weight: 600; color: var(--hint); margin: 14px 0 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1.5px solid var(--sep); background: var(--bg); border-radius: 999px; padding: 7px 12px; cursor: pointer; font-size: 14px; }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .days .chip { min-width: 44px; text-align: center; padding: 7px 0; flex: 1; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .note { font-size: 13px; color: var(--hint); margin-top: 6px; }
+  .note.warn { color: var(--soon); }
+  .switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 12px; background: var(--bg2); border-radius: 12px; }
+  .switch small { display: block; color: var(--hint); font-size: 12.5px; }
+  .tog { position: relative; width: 48px; height: 28px; flex: none; }
+  .tog input { opacity: 0; width: 0; height: 0; }
+  .tog span { position: absolute; inset: 0; background: var(--sep); border-radius: 999px; transition: .2s; cursor: pointer; }
+  .tog span::after { content: ""; position: absolute; width: 22px; height: 22px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .tog input:checked + span { background: var(--later); }
+  .tog input:checked + span::after { transform: translateX(20px); }
+  textarea.inp { resize: vertical; min-height: 64px; }
+  .save { width: 100%; margin-top: 18px; padding: 14px; font-size: 16px; }
+  .acts { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .act { border: 0; border-radius: 12px; padding: 11px 6px; cursor: pointer; font-weight: 600; font-size: 14px; }
+  .act.done { background: color-mix(in srgb, var(--later) 15%, transparent); color: var(--later); }
+  .act.pause { background: color-mix(in srgb, var(--soon) 16%, transparent); color: #c27100; }
+  .act.del { background: color-mix(in srgb, var(--late) 13%, transparent); color: var(--late); }
+
+  @media (prefers-reduced-motion: reduce) { .row.gone { animation: none; opacity: 0; } .toast, .sheet, .shade, .hero { transition: none; } }
 </style>
 </head>
 <body>
-<section class="next empty" id="next" aria-live="polite">
-  <p class="next-label">Navbatdagi ish</p>
-  <p class="next-title" id="nextTitle">Yuklanmoqda…</p>
-  <div class="next-clock" id="nextClock" hidden></div>
-  <p class="next-when" id="nextWhen"></p>
+<section class="hero empty" id="hero" aria-live="polite">
+  <p class="hero-label">Navbatdagi ish</p>
+  <p class="hero-title" id="heroTitle">Yuklanmoqda…</p>
+  <div class="hero-clock" id="heroClock" hidden></div>
+  <p class="hero-when" id="heroWhen"></p>
+  <span class="hero-who" id="heroWho" hidden></span>
 </section>
 
 <div class="seg" role="tablist">
@@ -135,20 +179,75 @@
 
 <main id="main"></main>
 
-<form class="add" id="addForm" autocomplete="off">
-  <input id="addInput" placeholder="Masalan: ertaga 10:00 da bankka borish" aria-label="Yangi vazifa">
-  <button id="addBtn" type="submit">Qo'shish</button>
+<form class="bar" id="aiForm" autocomplete="off">
+  <input id="aiInput" placeholder="AI'ga yozing: ertaga 10 da bankka borish" aria-label="AI orqali yangi vazifa">
+  <button class="round send-b" id="aiBtn" type="submit" aria-label="Yuborish">➤</button>
+  <button class="round plus" id="plusBtn" type="button" aria-label="Forma orqali qo'shish">+</button>
 </form>
+
+<div id="editor">
+  <div class="shade" id="shade"></div>
+  <form class="sheet" id="sheet" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="grab"></div>
+    <h3 id="sheetTitle">Yangi vazifa</h3>
+
+    <label class="lbl" for="fTitle">Nima qilish kerak</label>
+    <textarea class="inp" id="fTitle" rows="2" placeholder="Masalan: Laminat ombor tozaligini tekshirish"></textarea>
+
+    <span class="lbl">Qachon</span>
+    <div class="chips" id="fTur">
+      <button type="button" class="chip" data-tur="once">Bir marta</button>
+      <button type="button" class="chip" data-tur="daily">Har kuni</button>
+      <button type="button" class="chip" data-tur="weekly">Hafta kunlari</button>
+      <button type="button" class="chip" data-tur="monthly">Oyning kuni</button>
+      <button type="button" class="chip" data-tur="interval">Har N kunda</button>
+    </div>
+    <p class="note warn" id="fCustom" hidden></p>
+
+    <div id="fOnce" hidden><span class="lbl">Sana</span><input class="inp" type="date" id="fSana"></div>
+    <div id="fWeekly" hidden><span class="lbl">Kunlar</span>
+      <div class="chips days" id="fKunlar">
+        <button type="button" class="chip" data-k="mon">Du</button><button type="button" class="chip" data-k="tue">Se</button>
+        <button type="button" class="chip" data-k="wed">Ch</button><button type="button" class="chip" data-k="thu">Pa</button>
+        <button type="button" class="chip" data-k="fri">Ju</button><button type="button" class="chip" data-k="sat">Sh</button>
+        <button type="button" class="chip" data-k="sun">Ya</button>
+      </div></div>
+    <div id="fMonthly" hidden><label class="lbl" for="fOyKuni">Oyning qaysi kuni</label><select class="inp" id="fOyKuni"></select></div>
+    <div id="fInterval" hidden><label class="lbl" for="fHar">Necha kunda bir marta</label><input class="inp" type="number" id="fHar" min="1" max="365" value="3"></div>
+
+    <div id="fTimeBox"><label class="lbl" for="fVaqt">Soat</label><input class="inp" type="time" id="fVaqt" value="09:00"></div>
+
+    <label class="switch" id="fBitBox"><span>Bitmaguncha eslatish<small>«Bajarildi» deyilganda butunlay yopiladi</small></span>
+      <span class="tog"><input type="checkbox" id="fBit"><span></span></span></label>
+
+    <label class="lbl" for="fOdam">Kimga</label>
+    <select class="inp" id="fOdam"></select>
+    <input class="inp" id="fOdamYangi" placeholder="Ismi, masalan: Akmal aka" hidden style="margin-top:8px">
+    <div id="fXabarBox" hidden>
+      <label class="lbl" for="fXabar">Unga boradigan xabar (lotinda yozing, kerak bo'lsa kirillga o'giriladi)</label>
+      <textarea class="inp" id="fXabar" rows="2" placeholder="Bo'sh qoldirsangiz, vazifa nomidan o'zim tuzaman"></textarea>
+    </div>
+
+    <button class="btn save" id="fSave" type="submit">Saqlash</button>
+    <div class="acts" id="fActs" hidden>
+      <button type="button" class="act done" data-act="done">✅ Bajarildi</button>
+      <button type="button" class="act pause" data-act="pause" id="fPauseBtn">⏸ Pauza</button>
+      <button type="button" class="act del" data-act="delete">🗑 O'chirish</button>
+    </div>
+  </form>
+</div>
 <div class="toast" id="toast" role="status"></div>
 
 <script>
 const tg = window.Telegram?.WebApp;
 tg?.ready(); tg?.expand();
+try { tg?.setHeaderColor?.("#2b7fff"); } catch (e) {}
 const TZ = "Asia/Tashkent";
 const dev = new URLSearchParams(location.search).get("dev");
 const AUTH = tg?.initData || (dev ? "dev:" + dev : "");
+const $ = id => document.getElementById(id);
 
-let tasks = [], tab = "tasks", timer;
+let tasks = [], people = [], tab = "tasks", editing = null;
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Init-Data": AUTH, ...(opts.headers || {}) } });
@@ -157,225 +256,249 @@ async function api(path, opts = {}) {
   return j;
 }
 
+const OYLAR = ["yanvar","fevral","mart","aprel","may","iyun","iyul","avgust","sentabr","oktabr","noyabr","dekabr"];
 const dayKey = d => d.toLocaleDateString("en-CA", { timeZone: TZ });
 const hm = d => d.toLocaleTimeString("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
-const OYLAR = ["yanvar","fevral","mart","aprel","may","iyun","iyul","avgust","sentabr","oktabr","noyabr","dekabr"];
-const dm = d => { const [y, m, dd] = dayKey(d).split("-"); return `${+dd}-${OYLAR[+m - 1]}`; };
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-
-function leftParts(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 };
-}
-function leftShort(ms) {
-  if (ms <= 0) return "vaqti keldi";
-  const p = leftParts(ms);
-  if (p.d > 0) return `${p.d} kun ${p.h} soat`;
-  if (p.h > 0) return `${p.h} soat ${p.m} daq`;
-  return `${p.m} daq`;
-}
+const dm = d => { const [, m, dd] = dayKey(d).split("-"); return `${+dd}-${OYLAR[+m - 1]}`; };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pad = n => String(n).padStart(2, "0");
-
-function state(t, now) {
-  if (t.status === "pauza") return "paused";
-  if (!t.next_at) return t.kind === "once" ? "late" : "";
-  const ms = new Date(t.next_at) - now;
-  if (ms <= 0) return "late";
-  if (ms < 3600e3) return "soon";
-  return "";
-}
+function parts(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 }; }
+function leftShort(ms) { if (ms <= 0) return "hozir"; const p = parts(ms); return p.d ? `${p.d} kun ${p.h} s` : p.h ? `${p.h} s ${p.m} daq` : `${p.m} daq`; }
 
 function groupOf(t, now) {
   if (t.status === "pauza") return "pauza";
   if (!t.next_at || new Date(t.next_at) <= now) return "late";
-  const k = dayKey(new Date(t.next_at)), today = dayKey(now);
-  const tomorrow = dayKey(new Date(now.getTime() + 864e5));
-  if (k === today) return "today";
-  if (k === tomorrow) return "tomorrow";
+  const k = dayKey(new Date(t.next_at));
+  if (k === dayKey(now)) return "today";
+  if (k === dayKey(new Date(now.getTime() + 864e5))) return "tomorrow";
   return "later";
 }
 const GROUPS = [["late", "Muddati o'tgan"], ["today", "Bugun"], ["tomorrow", "Ertaga"], ["later", "Keyinroq"], ["pauza", "Pauzada"]];
 
-function rowRight(t, now) {
+function pillText(t, now) {
   if (t.status === "pauza") return "pauza";
-  if (!t.next_at) return t.run_date ? dm(new Date(t.run_date + "+05:00")) : "";
-  const d = new Date(t.next_at);
+  if (!t.next_at) return t.run_date ? dm(new Date(t.run_date + "+05:00")) : "—";
+  const d = new Date(t.next_at), g = groupOf(t, now);
   if (d <= now) return "hozir";
-  const g = groupOf(t, now);
   if (g === "today") return d - now < 3600e3 ? leftShort(d - now) : hm(d);
   if (g === "tomorrow") return hm(d);
   return dm(d);
 }
 
+/* ---------- Vazifalar ---------- */
 function renderTasks() {
-  const now = new Date(), main = document.getElementById("main");
-  if (!tasks.length) {
-    main.innerHTML = `<p class="empty-state">Hozircha vazifa yo'q.<br>Pastdagi qatorga oddiy tilda yozing.</p>`;
-    return;
-  }
+  const now = new Date(), main = $("main");
+  if (!tasks.length) { main.innerHTML = `<p class="empty-state">Hozircha vazifa yo'q.<br>Pastdagi <b>+</b> tugmasini bosing yoki AI'ga yozing.</p>`; return; }
   const sorted = [...tasks].sort((a, b) => (a.next_at ? new Date(a.next_at) : 0) - (b.next_at ? new Date(b.next_at) : 0));
   main.innerHTML = GROUPS.map(([g, name]) => {
     const items = sorted.filter(t => groupOf(t, now) === g);
     if (!items.length) return "";
-    return `<section class="group ${g}"><h2>${name}, ${items.length} ta</h2><div class="list">${items.map(t => `
-      <button class="row ${state(t, now)} ${t.status === "bitdi" ? "done-cycle" : ""}" data-id="${t.id}">
+    return `<section class="group g-${g}"><h2>${name} <span class="cnt">${items.length}</span></h2><div class="list">${items.map(t => {
+      const soon = g === "today" && t.next_at && new Date(t.next_at) - now < 3600e3 ? "soon" : "";
+      return `<button class="row ${soon} ${t.status === "pauza" ? "paused" : ""} ${t.status === "bitdi" ? "done-cycle" : ""}" data-id="${t.id}">
         <span class="n">${t.num}</span>
-        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " (bitguncha)" : ""}</span>${t.odam ? `<span class="who ${t.odam_tanlangan ? "" : "pending"}">→ ${esc(t.odam)}${t.odam_tanlangan ? "" : " (odam tanlanmagan)"}</span>` : ""}</span>
-        <span class="left" data-left="${t.id}">${esc(rowRight(t, now))}</span>
-      </button>`).join("")}</div></section>`;
+        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " · bitguncha" : ""}</span>${t.odam ? `<span class="who ${t.odam_tanlangan ? "" : "pending"}">→ ${esc(t.odam)}${t.odam_tanlangan ? "" : " · tanlanmagan"}</span>` : ""}</span>
+        <span class="pill" data-left="${t.id}">${esc(pillText(t, now))}</span>
+      </button>`;
+    }).join("")}</div></section>`;
   }).join("");
 }
 
-function renderNext() {
-  const now = new Date(), box = document.getElementById("next");
+function renderHero() {
+  const now = new Date(), box = $("hero");
   const up = tasks.filter(t => t.status !== "pauza" && t.next_at && new Date(t.next_at) > now)
                   .sort((a, b) => new Date(a.next_at) - new Date(b.next_at))[0];
-  const title = document.getElementById("nextTitle"), clock = document.getElementById("nextClock"), when = document.getElementById("nextWhen");
-  box.classList.remove("is-soon", "is-late");
-  if (!up) { box.classList.add("empty"); title.textContent = "Rejada ish yo'q"; clock.hidden = true; when.textContent = ""; return; }
-  box.classList.remove("empty");
-  const d = new Date(up.next_at), ms = d - now, p = leftParts(ms);
-  title.textContent = `${up.num}) ${up.title}`;
-  clock.hidden = false;
-  clock.innerHTML = (p.d ? `${p.d}<span class="u">kun</span>` : "")
-    + (p.d || p.h ? `${p.h}<span class="u">soat</span>` : "")
-    + `${p.m}<span class="u">daq</span>`
-    + (!p.d && !p.h ? `${pad(p.s)}<span class="u">son</span>` : "");
+  box.className = "hero";
+  if (!up) { box.classList.add("empty"); $("heroTitle").textContent = "Rejada ish yo'q"; $("heroClock").hidden = true; $("heroWhen").textContent = ""; $("heroWho").hidden = true; return; }
+  const d = new Date(up.next_at), ms = d - now, p = parts(ms);
+  box.classList.add(ms < 3600e3 ? "soon" : groupOf(up, now));
+  $("heroTitle").textContent = `${up.num}) ${up.title}`;
+  $("heroClock").hidden = false;
+  $("heroClock").innerHTML = (p.d ? `${p.d}<span class="u">kun</span>` : "") + (p.d || p.h ? `${p.h}<span class="u">soat</span>` : "")
+    + `${p.m}<span class="u">daq</span>` + (!p.d && !p.h ? `${pad(p.s)}<span class="u">son</span>` : "");
   const tom = dayKey(new Date(now.getTime() + 864e5));
   const day = dayKey(d) === dayKey(now) ? "Bugun" : dayKey(d) === tom ? "Ertaga" : dm(d);
-  when.textContent = `qoldi · ${day} soat ${hm(d)} da. ${up.human_time}`;
-  if (ms < 3600e3) box.classList.add("is-soon");
+  $("heroWhen").textContent = `qoldi · ${day} soat ${hm(d)} da · ${up.human_time}`;
+  $("heroWho").hidden = !up.odam; $("heroWho").textContent = up.odam ? "→ " + up.odam : "";
 }
 
 async function renderHistory() {
-  const main = document.getElementById("main");
-  main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
+  const main = $("main"); main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
   try {
     const { history } = await api("/api/history");
     if (!history.length) { main.innerHTML = `<p class="empty-state">Hali bajarilgan ish yo'q.</p>`; return; }
-    main.innerHTML = `<section class="group hist"><div class="list">${history.map(h => {
+    main.innerHTML = `<section class="group hist g-later"><h2>Bajarilganlar <span class="cnt">${history.length}</span></h2><div class="list">${history.map(h => {
       const d = new Date(h.done_at);
-      return `<div class="row"><span class="t">${esc(h.title)}<span class="h">${esc(h.human_time)}</span></span><span class="left">${dm(d)}, ${hm(d)}</span></div>`;
+      return `<div class="row"><span class="t">${esc(h.title)}<span class="h">${esc(h.human_time)}</span></span><span class="pill">${dm(d)}, ${hm(d)}</span></div>`;
     }).join("")}</div></section>`;
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
+/* ---------- Odamlar ---------- */
 let loginStep = "phone";
 async function renderPeople() {
-  const main = document.getElementById("main");
-  main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
+  const main = $("main"); main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
   try {
-    const [st, { people }, { sends }] = await Promise.all([api("/api/tg/status"), api("/api/people"), api("/api/sends")]);
+    const [st, pr, { sends }] = await Promise.all([api("/api/tg/status"), api("/api/people"), api("/api/sends")]);
+    people = pr.people;
     let acc;
     if (!st.configured) acc = `<h3>Akkaunt</h3><p>Railway'da TG_API_ID va TG_API_HASH qo'yilmagan.</p>`;
-    else if (st.connected) acc = `<h3>Akkaunt</h3><p><span class="ok">Ulangan:</span> ${esc(st.name || "")} ${esc(st.phone || "")}<br>Odamlarga xabar shu akkauntdan boradi.</p>
-      <button class="btn danger" id="tgLogout">Akkauntni uzish</button>`;
-    else acc = `<h3>Akkauntni ulash</h3>
-      <p>${loginStep === "phone" ? "Odamlarga sizning nomingizdan yozish uchun Telegram raqamingizni kiriting." :
-          loginStep === "code" ? "Telegram ilovasiga kod keldi. Shu yerga kiriting (chatga yozmang)." :
-          "Akkauntingizda ikki bosqichli parol bor. Uni kiriting."}</p>
-      <form class="field" id="tgForm">
-        <input id="tgInput" ${loginStep === "password" ? 'type="password"' : 'inputmode="tel"'} autocomplete="off"
-          placeholder="${loginStep === "phone" ? "+998 90 123 45 67" : loginStep === "code" ? "Kod" : "Parol"}">
-        <button class="btn" type="submit">${loginStep === "phone" ? "Kod olish" : "Ulash"}</button>
-      </form>`;
+    else if (st.connected) acc = `<h3>Akkaunt</h3><p><span class="ok">Ulangan:</span> ${esc(st.name || "")} ${esc(st.phone || "")}<br>Odamlarga xabar shu akkauntdan boradi.</p><button class="btn danger-text" id="tgLogout">Akkauntni uzish</button>`;
+    else acc = `<h3>Akkauntni ulash</h3><p>${loginStep === "phone" ? "Odamlarga sizning nomingizdan yozish uchun Telegram raqamingizni kiriting." : loginStep === "code" ? "Telegram ilovasiga kod keldi. Shu yerga kiriting (chatga yozmang)." : "Ikki bosqichli parolingizni kiriting."}</p>
+      <form class="field" id="tgForm"><input class="inp" id="tgInput" ${loginStep === "password" ? 'type="password"' : 'inputmode="tel"'} placeholder="${loginStep === "phone" ? "+998 90 123 45 67" : loginStep === "code" ? "Kod" : "Parol"}">
+      <button class="btn" type="submit">${loginStep === "phone" ? "Kod olish" : "Ulash"}</button></form>`;
     const ppl = people.length ? `<div class="list">${people.map(p => `
-      <div class="person" data-pid="${p.id}">
-        <span>${esc(p.ism)}<span class="h">${esc(p.tg_ism || "")}${p.username ? " · @" + esc(p.username) : ""} · ${p.vazifa_soni} ta vazifa</span></span>
-        <span class="abc" role="group" aria-label="Yozuv">
-          <button data-abc="kiril" aria-pressed="${p.alifbo === "kiril"}">Кирилл</button>
-          <button data-abc="lotin" aria-pressed="${p.alifbo === "lotin"}">Lotin</button>
-        </span>
-      </div>`).join("")}</div>`
-      : `<p class="empty-state">Hali odam yo'q. Botga yozing: «Abbosxon akaga har 3 kunda laminat omborni tekshirishni ayt».</p>`;
+      <div class="person" data-pid="${p.id}"><span>${esc(p.ism)}<span class="h">${esc(p.tg_ism || "")}${p.username ? " · @" + esc(p.username) : ""} · ${p.vazifa_soni} ta vazifa</span></span>
+        <span class="abc"><button data-abc="kiril" aria-pressed="${p.alifbo === "kiril"}">Кирилл</button><button data-abc="lotin" aria-pressed="${p.alifbo === "lotin"}">Lotin</button></span></div>`).join("")}</div>`
+      : `<p class="empty-state">Hali odam yo'q. Vazifa qo'shganda «Kimga» bo'limida ismini yozing.</p>`;
     const cls = h => ["bajarildi", "kochirildi"].includes(h) ? "good" : ["javobsiz", "oqilmadi"].includes(h) ? "bad" : ["yuborildi", "soraldi"].includes(h) ? "wait" : "";
-    const snd = sends.length ? `<section class="group"><h2>Yuborilgan xabarlar</h2><div class="list">${sends.map(x => {
+    const snd = sends.length ? `<section class="group g-today"><h2>Yuborilgan xabarlar <span class="cnt">${sends.length}</span></h2><div class="list">${sends.map(x => {
       const d = new Date(x.yuborilgan_at);
-      return `<div class="send"><div class="top"><span>${esc(x.odam || "")}</span><span class="st ${cls(x.holat)}">${esc(x.holat_uz)}${x.oqilgan && x.holat === "yuborildi" ? ", o'qidi" : ""}</span></div>
-        <div class="m">${esc(x.matn)}</div>
-        ${x.javob ? `<div class="r">${x.javob_turi === "ovoz" ? "🎤 " : ""}«${esc(x.javob)}»</div>` : ""}
-        <div class="r">${dm(d)}, ${hm(d)}</div></div>`;
+      return `<div class="send"><div class="top"><span>${esc(x.odam)}</span><span class="st ${cls(x.holat)}">${esc(x.holat_uz)}${x.oqilgan && x.holat === "yuborildi" ? ", o'qidi" : ""}</span></div>
+        <div class="m">${esc(x.matn)}</div>${x.javob ? `<div class="r">${x.javob_turi === "ovoz" ? "🎤 " : ""}«${esc(x.javob)}»</div>` : ""}<div class="r">${dm(d)}, ${hm(d)}</div></div>`;
     }).join("")}</div></section>` : "";
-    main.innerHTML = `<section class="card">${acc}</section>
-      <section class="group"><h2>Odamlar</h2>${ppl}</section>${snd}`;
+    main.innerHTML = `<section class="card">${acc}</section><section class="group g-tomorrow"><h2>Odamlar <span class="cnt">${people.length}</span></h2>${ppl}</section>${snd}`;
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
-document.getElementById("main").addEventListener("submit", async e => {
-  if (e.target.id !== "tgForm") return;
+/* ---------- Tahrirlash oynasi ---------- */
+for (let i = 1; i <= 31; i++) $("fOyKuni").insertAdjacentHTML("beforeend", `<option value="${i}">${i}-kuni</option>`);
+$("fOyKuni").insertAdjacentHTML("beforeend", `<option value="last">Oyning oxirgi kuni</option>`);
+let fTur = "daily", fKunlar = new Set();
+
+function setTur(t) {
+  fTur = t;
+  document.querySelectorAll("#fTur .chip").forEach(c => c.setAttribute("aria-pressed", c.dataset.tur === t));
+  $("fOnce").hidden = t !== "once"; $("fWeekly").hidden = t !== "weekly"; $("fMonthly").hidden = t !== "monthly"; $("fInterval").hidden = t !== "interval";
+  $("fTimeBox").hidden = t === "custom"; $("fBitBox").hidden = t === "once" || t === "custom";
+}
+function setKunlar() { document.querySelectorAll("#fKunlar .chip").forEach(c => c.setAttribute("aria-pressed", fKunlar.has(c.dataset.k))); }
+function fillOdam(selectedId, name) {
+  const opts = [`<option value="">O'zimga eslatma</option>`].concat(people.map(p => `<option value="${p.id}">${esc(p.ism)}</option>`));
+  opts.push(`<option value="new">+ Yangi odam…</option>`);
+  $("fOdam").innerHTML = opts.join("");
+  if (selectedId) $("fOdam").value = String(selectedId);
+  else if (name) { $("fOdam").value = "new"; $("fOdamYangi").value = name; }
+  else $("fOdam").value = "";
+  syncOdam();
+}
+function syncOdam() {
+  const v = $("fOdam").value;
+  $("fOdamYangi").hidden = v !== "new";
+  $("fXabarBox").hidden = !v;
+}
+
+async function openEditor(t) {
+  editing = t || null;
+  if (!people.length) { try { people = (await api("/api/people")).people; } catch (e) {} }
+  $("sheetTitle").textContent = t ? `${t.num}-vazifa` : "Yangi vazifa";
+  $("fTitle").value = t?.title || "";
+  const f = t?.form || { tur: "daily", vaqt: "09:00" };
+  $("fCustom").hidden = f.tur !== "custom";
+  if (f.tur === "custom") $("fCustom").textContent = `Hozirgi jadval: «${t.human_time}». O'zgartirmasangiz shunday qoladi; yangisini tanlash uchun yuqoridagi turlardan birini bosing.`;
+  setTur(f.tur);
+  $("fVaqt").value = f.vaqt || "09:00";
+  const tomorrow = new Date(Date.now() + 864e5).toLocaleDateString("en-CA", { timeZone: TZ });
+  $("fSana").value = f.sana || tomorrow;
+  $("fSana").min = new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+  fKunlar = new Set(f.kunlar || []); setKunlar();
+  $("fOyKuni").value = String(f.oy_kuni || 1);
+  $("fHar").value = f.har || 3;
+  $("fBit").checked = !!t?.bitguncha;
+  $("fOdamYangi").value = "";
+  fillOdam(t?.odam_id, t && !t.odam_id ? t.odam : "");
+  $("fXabar").value = t?.xabar || "";
+  $("fActs").hidden = !t;
+  $("fPauseBtn").textContent = t?.status === "pauza" ? "▶️ Davom" : "⏸ Pauza";
+  $("editor").classList.add("open");
+  tg?.BackButton?.show();
+  if (!t) setTimeout(() => $("fTitle").focus(), 250);
+}
+function closeEditor() { $("editor").classList.remove("open"); tg?.BackButton?.hide(); editing = null; }
+tg?.BackButton?.onClick(closeEditor);
+$("shade").addEventListener("click", closeEditor);
+$("fTur").addEventListener("click", e => { const c = e.target.closest("[data-tur]"); if (c) { setTur(c.dataset.tur); $("fCustom").hidden = true; } });
+$("fKunlar").addEventListener("click", e => { const c = e.target.closest("[data-k]"); if (!c) return; fKunlar.has(c.dataset.k) ? fKunlar.delete(c.dataset.k) : fKunlar.add(c.dataset.k); setKunlar(); });
+$("fOdam").addEventListener("change", syncOdam);
+$("plusBtn").addEventListener("click", () => openEditor(null));
+
+$("sheet").addEventListener("submit", async e => {
   e.preventDefault();
-  const v = document.getElementById("tgInput").value.trim(); if (!v) return;
-  const btn = e.target.querySelector("button"); btn.disabled = true;
+  const odamV = $("fOdam").value;
+  const body = {
+    title: $("fTitle").value.trim(),
+    form: fTur === "custom" ? { tur: "custom" } : { tur: fTur, vaqt: $("fVaqt").value, sana: $("fSana").value, kunlar: [...fKunlar], oy_kuni: $("fOyKuni").value, har: +$("fHar").value },
+    bitguncha: fTur !== "once" && $("fBit").checked,
+    odam_id: odamV && odamV !== "new" ? +odamV : null,
+    odam_ism: odamV === "new" ? $("fOdamYangi").value.trim() : null,
+    xabar: odamV ? $("fXabar").value.trim() : null,
+  };
+  if (odamV === "new" && !body.odam_ism) return toast("Odamning ismini yozing");
+  const btn = $("fSave"); btn.disabled = true;
   try {
-    if (loginStep === "phone") { await api("/api/tg/code", { method: "POST", body: JSON.stringify({ phone: v }) }); loginStep = "code"; }
-    else if (loginStep === "code") {
-      const { result } = await api("/api/tg/login", { method: "POST", body: JSON.stringify({ code: v }) });
-      loginStep = result === "password" ? "password" : "phone";
-      if (result === "ok") toast("Akkaunt ulandi ✅");
-    } else { await api("/api/tg/password", { method: "POST", body: JSON.stringify({ password: v }) }); loginStep = "phone"; toast("Akkaunt ulandi ✅"); }
-  } catch (err) { toast(err.message); }
-  btn.disabled = false;
-  renderPeople();
+    if (editing) await api(`/api/tasks/${editing.id}`, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/api/tasks/form", { method: "POST", body: JSON.stringify(body) });
+    tg?.HapticFeedback?.notificationOccurred("success");
+    toast(editing ? "Saqlandi ✅" : "Qo'shildi ✅" + (body.odam_ism ? "\nBotda odamni tanlang" : ""));
+    closeEditor(); await load();
+  } catch (err) { toast(err.message); tg?.HapticFeedback?.notificationOccurred("error"); }
+  finally { btn.disabled = false; }
 });
 
-function render() { renderNext(); if (tab === "tasks") renderTasks(); }
-
-async function load() {
-  try {
-    ({ tasks } = await api("/api/tasks"));
-    render();
-  } catch (e) {
-    document.getElementById("nextTitle").textContent = "Ma'lumot olinmadi";
-    document.getElementById("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching.</p>`;
-  }
-}
-
-function toast(msg) {
-  const el = document.getElementById("toast");
-  el.textContent = msg; el.classList.add("on");
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 3500);
-}
-
-function ask(t) {
-  const paused = t.status === "pauza";
-  const buttons = [
-    { id: "done", type: "default", text: "✅ Bajarildi" },
-    { id: "pause", type: "default", text: paused ? "▶️ Davom ettirish" : "⏸ Pauza" },
-    { id: "delete", type: "destructive", text: "O'chirish" },
-  ];
-  const msg = `${t.human_time}${t.bitguncha ? " (bitguncha)" : ""}`;
-  return new Promise(res => {
-    if (tg?.showPopup && tg.isVersionAtLeast?.("6.2")) tg.showPopup({ title: t.title.slice(0, 64), message: msg, buttons }, res);
-    else { const a = prompt(`${t.title}\n1 — bajarildi, 2 — pauza, 3 — o'chirish`); res(["", "done", "pause", "delete"][+a] || null); }
-  });
-}
-
-document.getElementById("main").addEventListener("click", async e => {
-  const abc = e.target.closest("[data-abc]");
-  if (abc) {
-    const pid = abc.closest("[data-pid]").dataset.pid;
-    try { await api(`/api/people/${pid}/alifbo`, { method: "POST", body: JSON.stringify({ alifbo: abc.dataset.abc }) });
-      toast(abc.dataset.abc === "kiril" ? "Endi kirillcha yuboriladi" : "Endi lotincha yuboriladi"); renderPeople(); }
-    catch (err) { toast(err.message); }
-    return;
-  }
-  if (e.target.id === "tgLogout") {
-    if (!confirm("Akkaunt uzilsinmi? Odamlarga xabar yuborish to'xtaydi.")) return;
-    try { await api("/api/tg/logout", { method: "POST" }); toast("Akkaunt uzildi"); renderPeople(); } catch (err) { toast(err.message); }
-    return;
-  }
-  const row = e.target.closest(".row[data-id]"); if (!row) return;
-  const t = tasks.find(x => x.id == row.dataset.id); if (!t) return;
-  const act = await ask(t); if (!act) return;
+$("fActs").addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]"); if (!b || !editing) return;
+  const act = b.dataset.act, t = editing;
+  if (act === "delete" && !(await confirmBox(`«${t.title}» o'chirilsinmi?`))) return;
   try {
     if (act === "done") await api(`/api/tasks/${t.id}/done`, { method: "POST" });
     if (act === "pause") await api(`/api/tasks/${t.id}/pause`, { method: "POST" });
     if (act === "delete") await api(`/api/tasks/${t.id}`, { method: "DELETE" });
     tg?.HapticFeedback?.notificationOccurred("success");
-    if (act !== "pause") { row.classList.add("gone"); await new Promise(r => setTimeout(r, 300)); }
     toast({ done: "Bajarildi ✅", pause: t.status === "pauza" ? "Davom ettirildi" : "Pauzaga qo'yildi", delete: "O'chirildi" }[act]);
-    await load();
+    closeEditor(); await load();
   } catch (err) { toast(err.message); }
+});
+
+function confirmBox(msg) {
+  return new Promise(res => (tg?.showConfirm && tg.isVersionAtLeast?.("6.2")) ? tg.showConfirm(msg, res) : res(confirm(msg)));
+}
+
+/* ---------- Umumiy ---------- */
+function render() { renderHero(); if (tab === "tasks") renderTasks(); }
+async function load() {
+  try { ({ tasks } = await api("/api/tasks")); render(); }
+  catch (e) { $("heroTitle").textContent = "Ma'lumot olinmadi"; $("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching.</p>`; }
+}
+function toast(msg) { const el = $("toast"); el.textContent = msg; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 3500); }
+
+$("main").addEventListener("click", async e => {
+  const abc = e.target.closest("[data-abc]");
+  if (abc) {
+    const pid = abc.closest("[data-pid]").dataset.pid;
+    try { await api(`/api/people/${pid}/alifbo`, { method: "POST", body: JSON.stringify({ alifbo: abc.dataset.abc }) }); toast(abc.dataset.abc === "kiril" ? "Endi kirillcha yuboriladi" : "Endi lotincha yuboriladi"); renderPeople(); }
+    catch (err) { toast(err.message); }
+    return;
+  }
+  if (e.target.id === "tgLogout") {
+    if (!(await confirmBox("Akkaunt uzilsinmi? Odamlarga xabar yuborish to'xtaydi."))) return;
+    try { await api("/api/tg/logout", { method: "POST" }); toast("Akkaunt uzildi"); renderPeople(); } catch (err) { toast(err.message); }
+    return;
+  }
+  const row = e.target.closest(".row[data-id]"); if (!row) return;
+  const t = tasks.find(x => x.id == row.dataset.id); if (t) openEditor(t);
+});
+
+$("main").addEventListener("submit", async e => {
+  if (e.target.id !== "tgForm") return;
+  e.preventDefault();
+  const v = $("tgInput").value.trim(); if (!v) return;
+  const btn = e.target.querySelector("button"); btn.disabled = true;
+  try {
+    if (loginStep === "phone") { await api("/api/tg/code", { method: "POST", body: JSON.stringify({ phone: v }) }); loginStep = "code"; }
+    else if (loginStep === "code") { const { result } = await api("/api/tg/login", { method: "POST", body: JSON.stringify({ code: v }) }); loginStep = result === "password" ? "password" : "phone"; if (result === "ok") toast("Akkaunt ulandi ✅"); }
+    else { await api("/api/tg/password", { method: "POST", body: JSON.stringify({ password: v }) }); loginStep = "phone"; toast("Akkaunt ulandi ✅"); }
+  } catch (err) { toast(err.message); }
+  btn.disabled = false; renderPeople();
 });
 
 document.querySelector(".seg").addEventListener("click", e => {
@@ -385,24 +508,20 @@ document.querySelector(".seg").addEventListener("click", e => {
   tab === "tasks" ? renderTasks() : tab === "people" ? renderPeople() : renderHistory();
 });
 
-document.getElementById("addForm").addEventListener("submit", async e => {
+$("aiForm").addEventListener("submit", async e => {
   e.preventDefault();
-  const input = document.getElementById("addInput"), btn = document.getElementById("addBtn");
-  const text = input.value.trim(); if (!text) return;
+  const input = $("aiInput"), btn = $("aiBtn"), text = input.value.trim(); if (!text) return;
   btn.disabled = true; btn.textContent = "…";
-  try {
-    const { reply } = await api("/api/tasks", { method: "POST", body: JSON.stringify({ text }) });
-    input.value = ""; toast(reply); tg?.HapticFeedback?.notificationOccurred("success");
-    await load();
-  } catch (err) { toast(err.message); }
-  finally { btn.disabled = false; btn.textContent = "Qo'shish"; }
+  try { const { reply } = await api("/api/tasks", { method: "POST", body: JSON.stringify({ text }) }); input.value = ""; toast(reply); tg?.HapticFeedback?.notificationOccurred("success"); await load(); }
+  catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = "➤"; }
 });
 
 load();
-timer = setInterval(() => { renderNext(); if (tab === "tasks") document.querySelectorAll("[data-left]").forEach(el => {
-  const t = tasks.find(x => x.id == el.dataset.left); if (t) el.textContent = rowRight(t, new Date());
-}); }, 1000);
-setInterval(load, 60000);
+api("/api/people").then(r => people = r.people).catch(() => {});
+setInterval(() => { renderHero(); if (tab === "tasks") document.querySelectorAll("[data-left]").forEach(el => {
+  const t = tasks.find(x => x.id == el.dataset.left); if (t) el.textContent = pillText(t, new Date()); }); }, 1000);
+setInterval(() => { if (!$("editor").classList.contains("open")) load(); }, 60000);
 </script>
 </body>
 </html>

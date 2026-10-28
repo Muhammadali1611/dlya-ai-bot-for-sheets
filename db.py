@@ -344,3 +344,16 @@ async def set_setting(kalit, qiymat):
         """insert into eslatma.sozlamalar (kalit, qiymat) values ($1, $2)
            on conflict (kalit) do update set qiymat = excluded.qiymat, updated_at = now()""",
         kalit, qiymat)
+
+
+async def update_task(tid, title, kind, trigger, human_time, next_at, bitguncha,
+                      odam_id, odam_ism, xabar_matni, status="faol"):
+    """Mini App'dagi tahrirlash formasidan to'liq yangilash."""
+    return await _pool.fetchval(
+        """update eslatma.vazifalar
+           set title = $2, kind = $3, trigger = $4::jsonb, human_time = $5, next_at = $6,
+               bitguncha = $7, odam_id = $8, odam_ism = $9, xabar_matni = $10, status = $11,
+               updated_at = now()
+           where id = $1 returning id""",
+        tid, title, kind, json.dumps(trigger, ensure_ascii=False), human_time, next_at,
+        bitguncha, odam_id, odam_ism, xabar_matni, status)

@@ -1,8 +1,10 @@
-"""AI eslatma boti — Google Sheets versiyasi.
+"""AI eslatma boti v2 — Supabase + Mini App.
 
-Foydalanuvchi o'zbekcha yozadi -> AI (Claude) tushunadi -> vazifa Sheets'ga yoziladi
--> vaqti kelganda bot raqamlangan eslatma yuboradi -> "3 bitdi" desangiz
-vazifa Bajarilganlar varag'iga o'tadi.
+Foydalanuvchi o'zbekcha yozadi -> AI tushunadi -> vazifa Supabase'ga yoziladi
+-> har 30 soniyada vaqti kelgan vazifalar tekshiriladi va eslatma yuboriladi
+-> "3 bitdi" (yoki Mini App'dagi ✅) -> vazifa tarixga o'tadi.
+
+Bot faqat egasi (OWNER_ID) uchun ishlaydi.
 """
 
 import os
@@ -10,340 +12,320 @@ import re
 import json
 import asyncio
 import logging
-from collections import defaultdict, deque
+from collections import deque
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+from telegram import (
+    Update, MenuButtonWebApp, WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup,
 )
-import anthropic
-from google.genai import errors as genai_errors
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes, filters,
+)
 from apscheduler.triggers.cron import CronTrigger
 
 import db
 import ai
 import triggers
+import webapp
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)  # har 10 soniyalik getUpdates log'i shart emas
 log = logging.getLogger("reminder-bot")
 
 TZ = ZoneInfo(os.environ.get("TZ", "Asia/Tashkent"))
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+OWNER_ID = int(os.environ.get("OWNER_ID", "7242956193"))
+CHECK_EVERY = int(os.environ.get("CHECK_EVERY", "30"))  # soniya
 
-# Har bir chat uchun oxirgi suhbatlar (AI kontekstni tushunishi uchun)
-HISTORY_LEN = int(os.environ.get("HISTORY_LEN", "8"))
-HISTORY = defaultdict(lambda: deque(maxlen=HISTORY_LEN))
+HISTORY = deque(maxlen=int(os.environ.get("HISTORY_LEN", "8")))
 TG_LIMIT = 4000
 
 WELCOME = (
-    "Assalomu alaykum! Men sizning AI eslatma yordamchingizman \U0001F916\n\n"
+    "Assalomu alaykum! Men sizning AI yordamchingizman \U0001F916\n\n"
     "Menga oddiy tilda yozing, men eslatib turaman. Masalan:\n"
     "• har chorshanba 14:00 do'konga borish\n"
     "• har oyning birinchi dushanbasi ishchilar bilan majlis\n"
-    "• har kuni 8:00 tabletka ich\n"
     "• ertaga 10:00 bankka bor\n"
-    "• har 3 kunda 11:00 omborni tekshir\n\n"
-    "«Bugun nima ishlarim bor?» deb so'rasangiz ham bo'ladi.\n"
-    "Boshqa istalgan mavzuda ham savol bering \U0001F60A\n\n"
+    "• har 3 kunda 11:00 omborni tekshir\n"
+    "• bitmaguncha har kuni 8:00 da elevator ishini eslat\n\n"
+    "«Bugun nima ishlarim bor?» deb so'rasangiz ham bo'ladi.\n\n"
     "Bajarganingizda: «3 bitdi»\n"
-    "O'chirish uchun: «3-ni o'chir»\n"
-    "Ro'yxat uchun: /list yoki «eslatmalarim»\n\n"
-    "Hammasi Google Sheets jadvalida ham ko'rinib turadi \U0001F4CA"
+    "Ro'yxat: /list  •  Ilova: pastdagi «📋 Vazifalar» tugmasi"
 )
 
-# "3 bitdi", "1, 4 bajarildi", "2 va 5 tugadi" — AI'siz tez ishlaydi
 DONE_RE = re.compile(
     r"^\s*((?:\d+\s*(?:,|va|\s)\s*)*\d+)\s*[-)]?\s*(?:ni\s+)?"
     r"(bitdi|bajarildi|bajardim|tugadi|qildim|tayyor)\W*$",
     re.IGNORECASE,
 )
 
-
-# ---------- vaqt hisoblash ----------
-
 next_fire = triggers.next_fire
 
 
-def today_times(rem, now=None):
-    """Vazifa bugun qaysi soatlarda ishlashini qaytaradi ("09:00, 15:00" yoki "")."""
-    now = now or datetime.now(TZ)
+# ---------- yordamchilar ----------
+
+def now_tz():
+    return datetime.now(TZ)
+
+
+def today_times(task, now=None):
+    """Vazifa bugun qaysi soatlarda ishlashi ("09:00, 15:00" yoki "")."""
+    now = now or now_tz()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     try:
-        params = json.loads(rem["trigger_json"])
-        trig = triggers.build(rem["kind"], params)
+        trig = triggers.build(task["kind"], task["trigger"])
     except Exception:
         return ""
-    times, prev, t = [], None, trig.get_next_fire_time(None, start)
+    times, t = [], trig.get_next_fire_time(None, start)
     while t is not None and t < end and len(times) < 24:
         times.append(t.astimezone(TZ).strftime("%H:%M"))
-        prev = t
-        t = trig.get_next_fire_time(prev, prev + timedelta(seconds=1))
+        t = trig.get_next_fire_time(t, t + timedelta(seconds=1))
     return ", ".join(times)
 
 
-async def send_long(message, text):
-    """Telegram 4096 belgidan uzun xabarni bo'laklab yuboradi."""
+def webapp_url():
+    url = os.environ.get("WEBAPP_URL", "").strip()
+    if not url and os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        url = "https://" + os.environ["RAILWAY_PUBLIC_DOMAIN"]
+    return url.rstrip("/")
+
+
+async def send_long(bot, text):
     text = text or "Bo'ldi ✅"
     while text:
         if len(text) <= TG_LIMIT:
-            await message.reply_text(text)
+            await bot.send_message(OWNER_ID, text)
             return
         cut = text.rfind("\n", 0, TG_LIMIT)
         if cut < TG_LIMIT // 2:
             cut = TG_LIMIT
-        await message.reply_text(text[:cut])
+        await bot.send_message(OWNER_ID, text[:cut])
         text = text[cut:].lstrip("\n")
 
 
-# ---------- jadvalga qo'yish ----------
-
-async def fire(context: ContextTypes.DEFAULT_TYPE):
-    data = context.job.data
-    rem = await asyncio.to_thread(db.get_reminder, data["id"])
-    if not rem:  # Sheets'dan qo'lda o'chirilgan bo'lsa
-        context.job.schedule_removal()
-        return
-
-    text = (
-        f"\U0001F514 {rem['num']}) Vazifa: {rem['title']}\n"
-        f"\U0001F552 {rem['human_time']}\n\n"
-        f"Bajarsangiz yozing: «{rem['num']} bitdi»"
-    )
-    try:
-        await context.bot.send_message(chat_id=rem["chat_id"], text=text)
-    except Exception as e:
-        log.warning("Xabar yuborilmadi (id=%s): %s", rem["id"], e)
-
-    nxt = None
-    if rem["kind"] in ("recurring", "interval"):
-        nxt = next_fire(rem["kind"], json.loads(rem["trigger_json"]))
-    await asyncio.to_thread(db.after_fire, rem["id"], nxt)
+def list_text(tasks):
+    if not tasks:
+        return "Hozircha vazifa yo'q."
+    lines = []
+    for t in tasks:
+        mark = {"bitdi": "✅", "pauza": "⏸"}.get(t["status"], "⏳")
+        left = f" — {mark} {t['left']}" if t["left"] else ""
+        lines.append(f"{t['num']}) {t['title']} — {t['human_time']}{left}")
+    return ("\U0001F4CB Vazifalaringiz:\n" + "\n".join(lines)
+            + "\n\nBajarganingizda: «<raqam> bitdi»")
 
 
-def schedule_one(job_queue, rem):
-    params = json.loads(rem["trigger_json"])
-    trigger = triggers.build(rem["kind"], params)
-    if rem["kind"] == "once" and trigger.run_date <= datetime.now(TZ):
-        return False  # vaqti o'tib ketgan — eslatma yuborilgan, "bitdi"ni kutadi
+# ---------- asosiy mantiq (bot ham, Mini App ham ishlatadi) ----------
 
-    job_queue.run_custom(
-        fire, job_kwargs={"trigger": trigger}, name=str(rem["id"]),
-        data={"id": rem["id"]},
-    )
-    log.info("Jadvalga qo'shildi: id=%s (%s)", rem["id"], rem["human_time"])
-    return True
+async def mark_done_ids(ids):
+    titles = []
+    for tid in ids:
+        r = await db.mark_done(tid)
+        if r:
+            titles.append(r["title"])
+    return titles
 
 
-def remove_jobs(job_queue, rid):
-    for j in job_queue.get_jobs_by_name(str(rid)):
-        j.schedule_removal()
+async def create_tasks(items):
+    """AI qaytargan vazifalarni yaratadi. (yaratilganlar, xatolar) qaytaradi."""
+    created, errors = [], []
+    for r in items or []:
+        try:
+            nxt = next_fire(r["kind"], r["trigger"])
+            if nxt is None:
+                raise ValueError("vaqti o'tib ketgan")
+            tid = await db.add_task(
+                r["title"], r["kind"], r["trigger"], r.get("human_time", ""), nxt,
+                bitguncha=bool(r.get("bitguncha")),
+            )
+            created.append(tid)
+            log.info("Yangi vazifa id=%s: %s (%s)", tid, r["title"], r.get("human_time"))
+        except Exception as e:  # noqa: BLE001
+            log.exception("Vazifa yaratishda xato: %s", e)
+            errors.append(f"⚠️ «{r.get('title', '')}» ni yozib bo'lmadi. Boshqacharoq aytib ko'ring.")
+    return created, errors
 
 
-async def monthly_reset_job(context: ContextTypes.DEFAULT_TYPE):
-    n = await asyncio.to_thread(db.monthly_reset)
-    log.info("Oy boshi: %d ta takroriy vazifa qayta Faol qilindi.", n)
+async def handle_text(text):
+    """Foydalanuvchi matnini bajaradi. (javob_matni, ro'yxat_kerakmi) qaytaradi."""
+    tasks = await db.list_tasks()
+
+    # 1) Tez yo'l: "3 bitdi" — AI'siz, limitni sarflamaydi
+    m = DONE_RE.match(text)
+    if m:
+        by_num = {t["num"]: t["id"] for t in tasks}
+        ids = [by_num[int(n)] for n in re.findall(r"\d+", m.group(1)) if int(n) in by_num]
+        if not ids:
+            return "Bunday raqamli vazifa topilmadi \U0001F914 /list bilan tekshirib ko'ring.", False
+        titles = await mark_done_ids(ids)
+        return "Barakalla! ✅ Bajarildi:\n• " + "\n• ".join(titles), False
+
+    # 2) Qolgan hamma narsa — AI orqali
+    now = now_tz()
+    for t in tasks:
+        t["today_times"] = today_times(t, now)
+    result = await asyncio.to_thread(
+        ai.understand, text, now.strftime("%Y-%m-%d %H:%M (%A)"), tasks, list(HISTORY))
+
+    own = {t["id"] for t in tasks}
+    for tid in result.get("ids_to_delete") or []:
+        if tid in own:
+            await db.delete_task(tid)
+    done_ids = [tid for tid in (result.get("ids_done") or []) if tid in own]
+    if done_ids:
+        await mark_done_ids(done_ids)
+    _, errors = await create_tasks(result.get("reminders_to_create"))
+
+    action = result.get("action", "chat")
+    reply = result.get("reply") or ""
+    HISTORY.append((text, reply or f"[{action}]"))
+    if errors:
+        reply = (reply + "\n\n" + "\n".join(errors)).strip()
+    return reply or "Bo'ldi ✅", action == "list"
 
 
-# ---------- buyruqlar ----------
+def ai_error_text(e):
+    """AI xatosini foydalanuvchiga tushunarli matnga aylantiradi."""
+    txt = str(e).lower()
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    if isinstance(e, RuntimeError) and "kalit" in txt:
+        return "⚠️ AI kaliti qo'yilmagan. Railway Variables'ga GEMINI_API_KEY qo'shing."
+    if code == 429 or "quota" in txt or "exhausted" in txt:
+        return "⏳ AI bepul limiti vaqtincha tugadi, birozdan keyin yozing. «3 bitdi» va /list ishlayveradi."
+    if code in (401, 403) or "api key" in txt:
+        return "⚠️ AI kaliti noto'g'ri. Railway'da GEMINI_API_KEY ni tekshiring."
+    return "Kechirasiz, xatolik bo'ldi \U0001F648 Yana bir bor yozib ko'ring."
+
+
+# ---------- Telegram handlerlari ----------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME)
 
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_list(update, update.effective_chat.id)
+    await send_long(context.bot, list_text(await db.list_tasks()))
 
 
-async def send_list(update, chat_id):
-    rems = await asyncio.to_thread(db.list_reminders, chat_id)
-    if not rems:
-        await update.message.reply_text("Hozircha vazifa yo'q.")
+async def app_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = webapp_url()
+    if not url:
+        await update.message.reply_text("Mini App manzili hali sozlanmagan.")
         return
-    lines = []
-    for r in rems:
-        mark = "✅" if r["status"] == "Bitdi" else "⏳"
-        left = f" — {mark} {r['left']}" if r["left"] else ""
-        lines.append(f"{r['num']}) {r['title']} — {r['human_time']}{left}")
-    await update.message.reply_text(
-        "\U0001F4CB Vazifalaringiz:\n" + "\n".join(lines)
-        + "\n\nBajarganingizda: «<raqam> bitdi»"
-    )
-
-
-async def do_done(update, context, chat_id, ids):
-    done_titles = []
-    for rid in ids:
-        rem = await asyncio.to_thread(db.get_reminder, rid)
-        if not rem or rem["chat_id"] != chat_id:
-            continue
-        if rem["kind"] == "once":
-            remove_jobs(context.job_queue, rid)
-        await asyncio.to_thread(db.mark_done, rid)
-        done_titles.append(rem["title"])
-    return done_titles
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("📋 Vazifalarni ochish", web_app=WebAppInfo(url))]])
+    await update.message.reply_text("Vazifalaringiz ilovada:", reply_markup=kb)
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    chat_id = update.effective_chat.id
-
-    # 1) Tez yo'l: "3 bitdi"
-    m = DONE_RE.match(text)
-    if m:
-        nums = [int(n) for n in re.findall(r"\d+", m.group(1))]
-        rems = await asyncio.to_thread(db.list_reminders, chat_id)
-        by_num = {r["num"]: r["id"] for r in rems}
-        ids = [by_num[n] for n in nums if n in by_num]
-        if not ids:
-            await update.message.reply_text(
-                "Bunday raqamli vazifa topilmadi \U0001F914 /list bilan tekshirib ko'ring."
-            )
-            return
-        titles = await do_done(update, context, chat_id, ids)
-        await update.message.reply_text(
-            "Barakalla! ✅ Bajarilganlarga o'tkazdim:\n• " + "\n• ".join(titles)
-        )
-        return
-
-    # 2) Qolgan hamma narsa — AI orqali
-    now = datetime.now(TZ)
-    now_str = now.strftime("%Y-%m-%d %H:%M (%A)")
-    reminders = await asyncio.to_thread(db.list_reminders, chat_id)
-    own_ids = {r["id"] for r in reminders}
-    for r in reminders:
-        r["today_times"] = today_times(r, now)
-
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await context.bot.send_chat_action(chat_id=OWNER_ID, action="typing")
     try:
-        result = await asyncio.to_thread(
-            ai.understand, text, now_str, reminders, list(HISTORY[chat_id])
-        )
-    except RuntimeError as e:  # kalit umuman qo'yilmagan
-        log.error("%s", e)
-        await update.message.reply_text(
-            "⚠️ AI kaliti qo'yilmagan. Railway Variables'ga GEMINI_API_KEY yoki ANTHROPIC_API_KEY qo'shing."
-        )
+        reply, show_list = await handle_text(update.message.text)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Xabarni bajarishda xato: %s", e)
+        await update.message.reply_text(ai_error_text(e))
         return
-    except anthropic.AuthenticationError as e:
-        log.error("API kalit xato: %s", e)
-        await update.message.reply_text(
-            "⚠️ Claude API kaliti noto'g'ri. Railway'da ANTHROPIC_API_KEY ni tekshiring."
-        )
-        return
-    except anthropic.RateLimitError as e:
-        log.warning("Limit: %s", e)
-        await update.message.reply_text(
-            "⏳ Hozir so'rov ko'p bo'lib ketdi, bir daqiqadan keyin qayta yozing."
-        )
-        return
-    except anthropic.APIStatusError as e:
-        log.error("Claude API xatosi %s: %s", e.status_code, e)
-        msg = "⚠️ Claude bilan bog'lanishda xato. Birozdan keyin qayta urinib ko'ring."
-        if "credit" in str(e).lower():
-            msg = "⚠️ Claude hisobida balans tugagan. console.anthropic.com da to'ldiring."
-        await update.message.reply_text(msg)
-        return
-    except genai_errors.APIError as e:
-        log.error("Gemini xatosi %s: %s", getattr(e, "code", "?"), e)
-        code, txt = getattr(e, "code", 0), str(e).lower()
-        if code == 429 or "quota" in txt or "exhausted" in txt:
-            msg = "⏳ Gemini bepul limiti vaqtincha tugadi, birozdan keyin yozing."
-        elif code in (400, 401, 403) and ("key" in txt or "permission" in txt or "auth" in txt):
-            msg = "⚠️ Gemini API kaliti noto'g'ri. Railway'da GEMINI_API_KEY ni tekshiring."
-        else:
-            msg = "⚠️ AI bilan bog'lanishda xato. Birozdan keyin qayta urinib ko'ring."
-        await update.message.reply_text(msg)
-        return
-    except Exception as e:
-        log.exception("AI xatosi: %s", e)
-        await update.message.reply_text(
-            "Kechirasiz, xatolik bo'ldi \U0001F648 Yana bir bor yozib ko'ring."
-        )
-        return
+    await send_long(context.bot, reply)
+    if show_list:
+        await send_long(context.bot, list_text(await db.list_tasks()))
 
-    action = result.get("action", "chat")
 
-    for rid in result.get("ids_to_delete", []) or []:
-        if rid in own_ids:
-            remove_jobs(context.job_queue, rid)
-            await asyncio.to_thread(db.delete_reminder, rid)
+async def stranger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Egasidan boshqa odam yozsa."""
+    if update.effective_message:
+        await update.effective_message.reply_text("Bu shaxsiy bot. Kechirasiz \U0001F64F")
 
-    done_ids = [rid for rid in (result.get("ids_done", []) or []) if rid in own_ids]
-    if done_ids:
-        await do_done(update, context, chat_id, done_ids)
 
-    for r in result.get("reminders_to_create", []) or []:
+async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
+    log.error("Kutilmagan xato: %s", context.error, exc_info=context.error)
+
+
+# ---------- eslatmalar tsikli ----------
+
+async def fire_due(bot):
+    now = now_tz()
+    for t in await db.due_tasks(now):
+        old = t["next_at"]
+        new = None
+        if t["kind"] in ("recurring", "interval"):
+            after = max(now, old) + timedelta(seconds=1)
+            new = next_fire(t["kind"], t["trigger"], now=after)
+        if not await db.claim_fire(t["id"], old, new):
+            continue  # boshqa jarayon allaqachon yubordi
+        num = next((x["num"] for x in await db.list_tasks() if x["id"] == t["id"]), "?")
+        late = (now - old).total_seconds() > 600
+        text = (
+            f"\U0001F514 {num}) {t['title']}\n"
+            f"\U0001F552 {t['human_time']}"
+            + (" (kechikib)" if late else "")
+            + f"\n\nBajarsangiz yozing: «{num} bitdi»"
+        )
         try:
-            nxt = next_fire(r["kind"], r["trigger"])  # trigger noto'g'ri bo'lsa shu yerda xato
-            rid = await asyncio.to_thread(
-                db.add_reminder, chat_id, r["title"], r["kind"], r["trigger"],
-                r.get("human_time", ""), nxt,
-            )
-            schedule_one(context.job_queue, {
-                "id": rid, "kind": r["kind"], "human_time": r.get("human_time", ""),
-                "trigger_json": json.dumps(r["trigger"]),
-            })
-        except Exception as e:
-            log.exception("Vazifa yaratishda xato: %s", e)
-            await update.message.reply_text(
-                f"⚠️ «{r.get('title', '')}» ni yozib bo'lmadi. Boshqacharoq aytib ko'ring."
-            )
+            await bot.send_message(OWNER_ID, text)
+            log.info("Eslatma yuborildi: id=%s", t["id"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("Eslatma yuborilmadi (id=%s): %s", t["id"], e)
 
-    reply = result.get("reply") or ""
-    HISTORY[chat_id].append((text, reply or f"[{action}]"))
 
-    if action == "list":
-        if reply:
-            await send_long(update.message, reply)
-        await send_list(update, chat_id)
-        return
-
-    await send_long(update.message, reply or "Bo'ldi ✅")
+async def scheduler_loop(bot):
+    last_month = now_tz().month
+    while True:
+        try:
+            await fire_due(bot)
+            m = now_tz().month
+            if m != last_month:
+                n = await db.monthly_reset()
+                log.info("Oy boshi: %d ta takroriy vazifa qayta faol qilindi.", n)
+                last_month = m
+        except Exception as e:  # noqa: BLE001
+            log.exception("Eslatmalar tsiklida xato: %s", e)
+        await asyncio.sleep(CHECK_EVERY)
 
 
 # ---------- ishga tushish ----------
 
-async def post_init(app: Application):
-    await asyncio.to_thread(db.init_db)
-    rems = await asyncio.to_thread(db.all_reminders)
-    count, refresh = 0, {}
-    for rem in rems:
+async def main():
+    await db.init()
+
+    app = Application.builder().token(TOKEN).build()
+    owner = filters.User(user_id=OWNER_ID)
+    app.add_handler(CommandHandler("start", start, filters=owner))
+    app.add_handler(CommandHandler("list", list_cmd, filters=owner))
+    app.add_handler(CommandHandler("app", app_cmd, filters=owner))
+    app.add_handler(MessageHandler(owner & filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_handler(MessageHandler(~owner, stranger))
+    app.add_error_handler(on_error)
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+    url = webapp_url()
+    if url:
         try:
-            if schedule_one(app.job_queue, rem):
-                count += 1
-            if rem["kind"] in ("recurring", "interval"):
-                refresh[rem["id"]] = next_fire(rem["kind"], json.loads(rem["trigger_json"]))
-        except Exception as e:
-            log.exception("Yuklashda xato (id=%s): %s", rem.get("id"), e)
-    await asyncio.to_thread(db.refresh_next_times, refresh)
+            await app.bot.set_chat_menu_button(
+                chat_id=OWNER_ID, menu_button=MenuButtonWebApp("📋 Vazifalar", WebAppInfo(url)))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Menyu tugmasini qo'yib bo'lmadi: %s", e)
 
-    # Har oyning 1-kuni 00:01 da takroriy vazifalar avtomatik reset
-    app.job_queue.run_custom(
-        monthly_reset_job,
-        job_kwargs={"trigger": CronTrigger(day=1, hour=0, minute=1, timezone=TZ)},
-        name="monthly_reset",
-    )
-    log.info("Bot tayyor. %d ta vazifa jadvalga qo'yildi. AI: %s", count, ai.provider())
+    runner = await webapp.start(handle_text, ai_error_text, port=int(os.environ.get("PORT", "8080")))
+    sched = asyncio.create_task(scheduler_loop(app.bot))
+    log.info("Bot tayyor. AI: %s. Mini App: %s", ai.provider(), url or "(manzil yo'q)")
 
-
-def main():
-    app = Application.builder().token(TOKEN).post_init(post_init).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("list", list_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    log.info("Bot ishga tushmoqda...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        await asyncio.Event().wait()
+    finally:
+        sched.cancel()
+        await runner.cleanup()
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        await db.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

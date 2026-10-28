@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vazifalar</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --bg2: var(--tg-theme-secondary-bg-color, #f1f2f5);
+    --text: var(--tg-theme-text-color, #15171a);
+    --hint: var(--tg-theme-hint-color, #8a8f98);
+    --accent: var(--tg-theme-button-color, #2f7de1);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --sep: color-mix(in srgb, var(--hint) 22%, transparent);
+    --late: #e5484d;
+    --soon: #e8a317;
+    --ok: #30a46c;
+    --num: "Barlow Condensed", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg2); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent; }
+  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Navbatdagi ish */
+  .next { background: var(--bg); padding: 18px 16px 16px; }
+  .next-label { color: var(--hint); font-size: 13px; margin: 0 0 6px; }
+  .next-title { font-size: 17px; font-weight: 600; margin: 0; }
+  .next-clock { font-family: var(--num); font-weight: 600; font-size: 64px; line-height: 1;
+    letter-spacing: .01em; margin: 10px 0 4px; font-variant-numeric: tabular-nums; }
+  .next-clock .u { font-size: 22px; font-weight: 500; color: var(--hint); margin: 0 6px 0 2px; }
+  .next-when { color: var(--hint); font-size: 13px; margin: 0; }
+  .next.is-soon .next-clock { color: var(--soon); }
+  .next.is-late .next-clock { color: var(--late); }
+  .next.empty .next-title { font-weight: 400; color: var(--hint); }
+
+  /* Bo'limlar tugmasi */
+  .seg { display: flex; gap: 4px; margin: 12px 16px 4px; background: var(--sep); padding: 3px; border-radius: 10px; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 7px 0; border-radius: 8px; cursor: pointer; }
+  .seg button[aria-selected="true"] { background: var(--bg); font-weight: 600; }
+
+  /* Ro'yxat */
+  .group { margin-top: 18px; }
+  .group h2 { font-size: 13px; font-weight: 500; color: var(--hint); margin: 0 16px 6px; }
+  .group.late h2 { color: var(--late); }
+  .list { background: var(--bg); }
+  .row { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+    width: 100%; text-align: left; border: 0; background: none; padding: 11px 16px; cursor: pointer;
+    border-bottom: 1px solid var(--sep); }
+  .row:last-child { border-bottom: 0; }
+  .row:active { background: var(--sep); }
+  .row .n { font-family: var(--num); font-size: 18px; color: var(--hint); text-align: right; }
+  .row .t { font-weight: 500; overflow-wrap: anywhere; }
+  .row .h { display: block; font-size: 13px; color: var(--hint); font-weight: 400; margin-top: 1px; }
+  .row .left { font-family: var(--num); font-size: 19px; font-weight: 500; white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  .row.soon .left { color: var(--soon); }
+  .row.late .left { color: var(--late); }
+  .row.paused { opacity: .55; }
+  .row.done-cycle .t::after { content: " ✓"; color: var(--ok); }
+  .row.gone { animation: gone .35s ease forwards; }
+  @keyframes gone { to { opacity: 0; transform: translateX(24px); } }
+
+  .hist .row { cursor: default; grid-template-columns: 1fr auto; }
+  .hist .row .left { font-size: 15px; color: var(--hint); font-family: inherit; }
+
+  .empty-state { text-align: center; color: var(--hint); padding: 40px 24px; }
+  .err { margin: 16px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--late) 12%, var(--bg)); color: var(--late); }
+
+  /* Qo'shish qatori */
+  .add { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg);
+    border-top: 1px solid var(--sep); padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    display: flex; gap: 8px; }
+  .add input { flex: 1; min-width: 0; border: 0; border-radius: 20px; padding: 10px 14px;
+    background: var(--bg2); color: var(--text); font: inherit; }
+  .add input::placeholder { color: var(--hint); }
+  .add button { border: 0; border-radius: 20px; padding: 0 16px; background: var(--accent);
+    color: var(--accent-text); font-weight: 600; cursor: pointer; }
+  .add button:disabled { opacity: .5; }
+  .toast { position: fixed; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom));
+    background: var(--text); color: var(--bg); padding: 12px 14px; border-radius: 12px;
+    white-space: pre-line; transform: translateY(12px); opacity: 0; transition: .25s; pointer-events: none; }
+  .toast.on { transform: none; opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) { .row.gone { animation: none; opacity: 0; } .toast { transition: none; } }
+</style>
+</head>
+<body>
+<section class="next empty" id="next" aria-live="polite">
+  <p class="next-label">Navbatdagi ish</p>
+  <p class="next-title" id="nextTitle">Yuklanmoqda…</p>
+  <div class="next-clock" id="nextClock" hidden></div>
+  <p class="next-when" id="nextWhen"></p>
+</section>
+
+<div class="seg" role="tablist">
+  <button role="tab" aria-selected="true" data-tab="tasks">Vazifalar</button>
+  <button role="tab" aria-selected="false" data-tab="history">Bajarilganlar</button>
+</div>
+
+<main id="main"></main>
+
+<form class="add" id="addForm" autocomplete="off">
+  <input id="addInput" placeholder="Masalan: ertaga 10:00 da bankka borish" aria-label="Yangi vazifa">
+  <button id="addBtn" type="submit">Qo'shish</button>
+</form>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready(); tg?.expand();
+const TZ = "Asia/Tashkent";
+const dev = new URLSearchParams(location.search).get("dev");
+const AUTH = tg?.initData || (dev ? "dev:" + dev : "");
+
+let tasks = [], tab = "tasks", timer;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Init-Data": AUTH, ...(opts.headers || {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("Server xatosi " + r.status));
+  return j;
+}
+
+const dayKey = d => d.toLocaleDateString("en-CA", { timeZone: TZ });
+const hm = d => d.toLocaleTimeString("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
+const OYLAR = ["yanvar","fevral","mart","aprel","may","iyun","iyul","avgust","sentabr","oktabr","noyabr","dekabr"];
+const dm = d => { const [y, m, dd] = dayKey(d).split("-"); return `${+dd}-${OYLAR[+m - 1]}`; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function leftParts(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 };
+}
+function leftShort(ms) {
+  if (ms <= 0) return "vaqti keldi";
+  const p = leftParts(ms);
+  if (p.d > 0) return `${p.d} kun ${p.h} soat`;
+  if (p.h > 0) return `${p.h} soat ${p.m} daq`;
+  return `${p.m} daq`;
+}
+const pad = n => String(n).padStart(2, "0");
+
+function state(t, now) {
+  if (t.status === "pauza") return "paused";
+  if (!t.next_at) return t.kind === "once" ? "late" : "";
+  const ms = new Date(t.next_at) - now;
+  if (ms <= 0) return "late";
+  if (ms < 3600e3) return "soon";
+  return "";
+}
+
+function groupOf(t, now) {
+  if (t.status === "pauza") return "pauza";
+  if (!t.next_at || new Date(t.next_at) <= now) return "late";
+  const k = dayKey(new Date(t.next_at)), today = dayKey(now);
+  const tomorrow = dayKey(new Date(now.getTime() + 864e5));
+  if (k === today) return "today";
+  if (k === tomorrow) return "tomorrow";
+  return "later";
+}
+const GROUPS = [["late", "Muddati o'tgan"], ["today", "Bugun"], ["tomorrow", "Ertaga"], ["later", "Keyinroq"], ["pauza", "Pauzada"]];
+
+function rowRight(t, now) {
+  if (t.status === "pauza") return "pauza";
+  if (!t.next_at) return t.run_date ? dm(new Date(t.run_date + "+05:00")) : "";
+  const d = new Date(t.next_at);
+  if (d <= now) return "hozir";
+  const g = groupOf(t, now);
+  if (g === "today") return d - now < 3600e3 ? leftShort(d - now) : hm(d);
+  if (g === "tomorrow") return hm(d);
+  return dm(d);
+}
+
+function renderTasks() {
+  const now = new Date(), main = document.getElementById("main");
+  if (!tasks.length) {
+    main.innerHTML = `<p class="empty-state">Hozircha vazifa yo'q.<br>Pastdagi qatorga oddiy tilda yozing.</p>`;
+    return;
+  }
+  const sorted = [...tasks].sort((a, b) => (a.next_at ? new Date(a.next_at) : 0) - (b.next_at ? new Date(b.next_at) : 0));
+  main.innerHTML = GROUPS.map(([g, name]) => {
+    const items = sorted.filter(t => groupOf(t, now) === g);
+    if (!items.length) return "";
+    return `<section class="group ${g}"><h2>${name}, ${items.length} ta</h2><div class="list">${items.map(t => `
+      <button class="row ${state(t, now)} ${t.status === "bitdi" ? "done-cycle" : ""}" data-id="${t.id}">
+        <span class="n">${t.num}</span>
+        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " (bitguncha)" : ""}</span></span>
+        <span class="left" data-left="${t.id}">${esc(rowRight(t, now))}</span>
+      </button>`).join("")}</div></section>`;
+  }).join("");
+}
+
+function renderNext() {
+  const now = new Date(), box = document.getElementById("next");
+  const up = tasks.filter(t => t.status !== "pauza" && t.next_at && new Date(t.next_at) > now)
+                  .sort((a, b) => new Date(a.next_at) - new Date(b.next_at))[0];
+  const title = document.getElementById("nextTitle"), clock = document.getElementById("nextClock"), when = document.getElementById("nextWhen");
+  box.classList.remove("is-soon", "is-late");
+  if (!up) { box.classList.add("empty"); title.textContent = "Rejada ish yo'q"; clock.hidden = true; when.textContent = ""; return; }
+  box.classList.remove("empty");
+  const d = new Date(up.next_at), ms = d - now, p = leftParts(ms);
+  title.textContent = `${up.num}) ${up.title}`;
+  clock.hidden = false;
+  clock.innerHTML = (p.d ? `${p.d}<span class="u">kun</span>` : "") + `${pad(p.h)}:${pad(p.m)}<span class="u">:${pad(p.s)}</span>`;
+  const tom = dayKey(new Date(now.getTime() + 864e5));
+  const day = dayKey(d) === dayKey(now) ? "Bugun" : dayKey(d) === tom ? "Ertaga" : dm(d);
+  when.textContent = `${day}, ${hm(d)}. ${up.human_time}`;
+  if (ms < 3600e3) box.classList.add("is-soon");
+}
+
+async function renderHistory() {
+  const main = document.getElementById("main");
+  main.innerHTML = `<p class="empty-state">Yuklanmoqda…</p>`;
+  try {
+    const { history } = await api("/api/history");
+    if (!history.length) { main.innerHTML = `<p class="empty-state">Hali bajarilgan ish yo'q.</p>`; return; }
+    main.innerHTML = `<section class="group hist"><div class="list">${history.map(h => {
+      const d = new Date(h.done_at);
+      return `<div class="row"><span class="t">${esc(h.title)}<span class="h">${esc(h.human_time)}</span></span><span class="left">${dm(d)}, ${hm(d)}</span></div>`;
+    }).join("")}</div></section>`;
+  } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+
+function render() { renderNext(); if (tab === "tasks") renderTasks(); }
+
+async function load() {
+  try {
+    ({ tasks } = await api("/api/tasks"));
+    render();
+  } catch (e) {
+    document.getElementById("nextTitle").textContent = "Ma'lumot olinmadi";
+    document.getElementById("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching.</p>`;
+  }
+}
+
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 3500);
+}
+
+function ask(t) {
+  const paused = t.status === "pauza";
+  const buttons = [
+    { id: "done", type: "default", text: "✅ Bajarildi" },
+    { id: "pause", type: "default", text: paused ? "▶️ Davom ettirish" : "⏸ Pauza" },
+    { id: "delete", type: "destructive", text: "O'chirish" },
+  ];
+  const msg = `${t.human_time}${t.bitguncha ? " (bitguncha)" : ""}`;
+  return new Promise(res => {
+    if (tg?.showPopup && tg.isVersionAtLeast?.("6.2")) tg.showPopup({ title: t.title.slice(0, 64), message: msg, buttons }, res);
+    else { const a = prompt(`${t.title}\n1 — bajarildi, 2 — pauza, 3 — o'chirish`); res(["", "done", "pause", "delete"][+a] || null); }
+  });
+}
+
+document.getElementById("main").addEventListener("click", async e => {
+  const row = e.target.closest(".row[data-id]"); if (!row) return;
+  const t = tasks.find(x => x.id == row.dataset.id); if (!t) return;
+  const act = await ask(t); if (!act) return;
+  try {
+    if (act === "done") await api(`/api/tasks/${t.id}/done`, { method: "POST" });
+    if (act === "pause") await api(`/api/tasks/${t.id}/pause`, { method: "POST" });
+    if (act === "delete") await api(`/api/tasks/${t.id}`, { method: "DELETE" });
+    tg?.HapticFeedback?.notificationOccurred("success");
+    if (act !== "pause") { row.classList.add("gone"); await new Promise(r => setTimeout(r, 300)); }
+    toast({ done: "Bajarildi ✅", pause: t.status === "pauza" ? "Davom ettirildi" : "Pauzaga qo'yildi", delete: "O'chirildi" }[act]);
+    await load();
+  } catch (err) { toast(err.message); }
+});
+
+document.querySelector(".seg").addEventListener("click", e => {
+  const b = e.target.closest("button[data-tab]"); if (!b) return;
+  tab = b.dataset.tab;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-selected", x === b));
+  tab === "tasks" ? renderTasks() : renderHistory();
+});
+
+document.getElementById("addForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const input = document.getElementById("addInput"), btn = document.getElementById("addBtn");
+  const text = input.value.trim(); if (!text) return;
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    const { reply } = await api("/api/tasks", { method: "POST", body: JSON.stringify({ text }) });
+    input.value = ""; toast(reply); tg?.HapticFeedback?.notificationOccurred("success");
+    await load();
+  } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = "Qo'shish"; }
+});
+
+load();
+timer = setInterval(() => { renderNext(); if (tab === "tasks") document.querySelectorAll("[data-left]").forEach(el => {
+  const t = tasks.find(x => x.id == el.dataset.left); if (t) el.textContent = rowRight(t, new Date());
+}); }, 1000);
+setInterval(load, 60000);
+</script>
+</body>
+</html>

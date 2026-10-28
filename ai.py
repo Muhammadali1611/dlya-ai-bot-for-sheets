@@ -119,6 +119,7 @@ TOOL = {
                         "kind": {"type": "string", "enum": ["once", "recurring", "interval"]},
                         "trigger": {"type": "object", "description": "Qoidalarga mos vaqt jadvali"},
                         "human_time": {"type": "string", "description": "O'qishga qulay vaqt, masalan: Har oyning 1-dushanbasi 9:00"},
+                        "bitguncha": {"type": "boolean", "description": "true — 'bitmaguncha/bitguncha har kuni' kabi: bajarildi deyilganda butunlay yopiladi"},
                     },
                     "required": ["title", "kind", "trigger", "human_time"],
                 },
@@ -184,6 +185,11 @@ kind = "interval" (har N kun/hafta/soatda):
   start — birinchi eslatma vaqti (bugun vaqt hali o'tmagan bo'lsa bugun, aks holda ertaga).
   "Har kuni"/"har hafta" uchun interval EMAS, recurring ishlat.
 
+bitguncha (ixtiyoriy, true/false):
+  "bitmaguncha har kuni", "bitguncha eslatib tur", "ish bitmaguncha" → bitguncha: true.
+  Bunday vazifa "bitdi" deyilganda butunlay yopiladi (keyingi kunlarda eslatilmaydi).
+  Oddiy takroriy vazifalarda (har shanba hisobot) bitguncha: false.
+
 ## Misollar
 
 "har oyni birinchi dushanba majlis" →
@@ -194,6 +200,8 @@ kind = "interval" (har N kun/hafta/soatda):
 "har oyning 25-sanasida oylik" → {"kind":"recurring","trigger":{"day":25,"hour":10,"minute":0}}
 "har 3 kunda 11:00 omborni tekshir" → {"kind":"interval","trigger":{"days":3,"start":"<bugun yoki ertaga>T11:00:00"}}
 "ertaga 10 da bank, payshanba 15:00 da Rustam aka bilan uchrashuv" → ikkita "once" vazifa.
+"elevator ishi bitmaguncha har kuni 8 da eslat" →
+  {"title":"Elevator ishini tekshirish","kind":"recurring","trigger":{"hour":8,"minute":0},"human_time":"Har kuni 8:00 (bitguncha)","bitguncha":true}
 """
 
 
@@ -205,7 +213,8 @@ def _render_reminders(reminders):
         today = f" — BUGUN: {r['today_times']}" if r.get("today_times") else ""
         lines.append(
             f'№{r["num"]} (id={r["id"]}): "{r["title"]}" — {r["human_time"]} — '
-            f'keyingi vaqt: {r.get("next") or "-"} — holati: {r["status"]}{today}'
+            f'keyingi vaqt: {r.get("next") or "-"} — holati: {r["status"]}'
+            f'{" — bitguncha" if r.get("bitguncha") else ""}{today}'
         )
     return "\n".join(lines)
 
@@ -307,7 +316,7 @@ Asbob chaqirish o'rniga FAQAT bitta JSON obyekt qaytar, boshqa hech qanday matn 
 {"action": "create|delete|done|update|list|chat",
  "reply": "<o'zbekcha javob>",
  "reminders_to_create": [{"title": "...", "kind": "once|recurring|interval",
-                          "trigger": {...}, "human_time": "..."}],
+                          "trigger": {...}, "human_time": "...", "bitguncha": false}],
  "ids_to_delete": [<id>], "ids_done": [<id>]}
 Bo'sh ro'yxatlarni ham [] qilib yoz.
 """

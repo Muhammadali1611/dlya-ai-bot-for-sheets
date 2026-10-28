@@ -1,48 +1,44 @@
-# AI Eslatma Bot — Google Sheets versiyasi
+# AI Eslatma Bot v2 — Supabase + Mini App
 
-Telegram bot: o'zbek tilida oddiy yozasiz, u tushunadi va vazifani **Google Sheets** jadvaliga yozadi.
-Vaqti kelganda raqamlangan eslatma yuboradi. "3 bitdi" desangiz, vazifa **Bajarilganlar** varag'iga o'tadi.
+Shaxsiy Telegram bot (faqat egasi uchun). O'zbek tilida oddiy yozasiz — AI tushunadi,
+vazifani Supabase bazasiga yozadi va vaqti kelganda raqamlangan eslatma yuboradi.
+Botning pastidagi **📋 Vazifalar** tugmasi Telegram ichida ilova (Mini App) ochadi.
 
-Misollar:
-- "har chorshanba 14:00 do'konga borish"
-- "har oyning birinchi dushanbasi ishchilar bilan majlis"
-- "ertaga 10:00 bankka bor"
-- "3 bitdi" yoki "1, 4 bitdi" — bajarildi
-- "3-ni o'chir" — butunlay o'chirish
-- "eslatmalarim" yoki /list
-- "har oyning oxirgi jumasi 17:00 hisobot", "har 3 kunda 11:00 omborni tekshir", "ish kunlari 8:30"
-- "7-ni soat 10 ga o'tkaz" — vazifani o'zgartirish
-- "bugun nima ishlarim bor?" — bugungi vazifalar soati bilan
-- Istalgan boshqa mavzuda savol — Claude oddiy suhbat qiladi
+## Imkoniyatlar
+- "ertaga 10 da bank", "har shanba 9:00 hisobot", "har oyning 1-dushanbasi majlis",
+  "har 3 kunda 11:00 omborni tekshir", "bitmaguncha har kuni 8 da elevatorni eslat"
+- "3 bitdi", "1, 4 bitdi" — AI'siz, darhol (limit sarflanmaydi)
+- "Bugun nima ishlarim bor?" va istalgan mavzuda suhbat
+- Mini App: navbatdagi ish va jonli sanoq, vaqt bo'yicha guruhlar, ✅ / ⏸ / o'chirish,
+  oddiy tilda yangi vazifa qo'shish, bajarilganlar tarixi
 
-## Jadval qanday ishlaydi
-- **Vazifalar** — faol vazifalar. "⏳ Qolgan vaqt" har daqiqada o'zi teskari sanaydi.
-- **Bajarilganlar** — "bitdi" deyilgan vazifalar (sana va oy bilan).
-- Bir martalik vazifa "bitdi" deyilsa — Vazifalar'dan o'chadi, Bajarilganlar'ga tushadi.
-- Takroriy vazifa "bitdi" deyilsa — Bajarilganlar'ga yoziladi, Vazifalar'da "Bitdi" bo'lib turadi,
-  keyingi navbati kelganda yoki oy boshida avtomatik yana "Faol" bo'ladi.
-- Kulrang ustunlar (trigger, chat_id, id) bot uchun — qo'lda o'zgartirmang.
+## Qanday ishlaydi
+- Vazifaning keyingi vaqti bazada (`next_at`). Bot har 30 soniyada vaqti kelganlarni tekshiradi —
+  qayta yonsa ham, Mini App'dan o'zgartirilsa ham hech narsa yo'qolmaydi.
+- Takroriy vazifa "bitdi" deyilsa — shu navbat bajarildi, keyingisida yana eslatadi.
+  Bir martalik yoki "bitguncha" vazifa "bitdi" deyilsa — butunlay yopilib, tarixga o'tadi.
+
+## Baza
+Supabase "Muhammadali1611's Project", alohida `eslatma` bo'limi (schema) — `schema.sql`.
+Bot faqat o'zining `eslatma_bot` login'i bilan ulanadi va boshqa jadvallarga huquqi yo'q.
 
 ## Railway Variables
 | Nomi | Qiymati |
 |---|---|
 | TELEGRAM_BOT_TOKEN | BotFather tokeni |
-| GEMINI_API_KEY | Gemini kaliti (aistudio.google.com) — bepul variant. Bot 3.8 Flash → 3.6 Flash → 3.5 Flash-Lite → 2.5 Flash tartibida, limit tugasa keyingisiga o'tadi |
-| ANTHROPIC_API_KEY | ixtiyoriy: Claude API kaliti (console.anthropic.com), `sk-ant-...` bilan boshlanadi |
-| AI_MODEL | ixtiyoriy, standart `claude-sonnet-5-5` (arzonroq: `claude-haiku-5-5`) |
-| SHEET_ID | Jadval havolasidagi `/d/` va `/edit` orasidagi qism |
-| GOOGLE_CREDENTIALS | Service account JSON faylining **butun matni** (nusxa olib qo'yiladi) |
+| GEMINI_API_KEY | Gemini kaliti (aistudio.google.com) |
+| OWNER_ID | Egasining Telegram ID si |
+| DB_PASSWORD | `eslatma_bot` login paroli (yoki to'liq `DATABASE_URL`) |
 | TZ | Asia/Tashkent |
 
-Endi Volume va DB_PATH kerak emas — hamma ma'lumot Sheets'da.
-
-## Muhim
-- Jadval service account emailiga **Muharrir** qilib ulashilgan bo'lishi kerak.
-- JSON kalitni GitHub'ga yuklamang (.gitignore himoya qiladi).
+Mini App manzili Railway'ning public domain'idan avtomatik olinadi (Settings → Networking →
+Generate Domain). Kerak bo'lsa `WEBAPP_URL` bilan qo'lda berish mumkin.
 
 ## Fayllar
-- bot.py — asosiy bot (eslatma, "bitdi", oy boshida reset)
-- ai.py — Claude yoki Gemini yordamida (qaysi kalit tursa, o'shani tanlaydi) o'zbekcha gapni tushunadi, suhbat qiladi
-- triggers.py — vaqt jadvallari (bir martalik, takroriy, har N kunda)
-- db.py — Google Sheets bilan ishlaydi
-- requirements.txt, Procfile, railway.json — joylash uchun
+- `bot.py` — bot, eslatmalar tsikli, ishga tushirish
+- `ai.py` — Gemini/Claude yordamida gapni tushunish
+- `db.py` — Supabase (Postgres) bilan ishlash
+- `triggers.py` — vaqt jadvallari
+- `webapp.py`, `webapp/index.html` — Mini App va uning API'si
+- `schema.sql` — baza tuzilmasi
+- `tools/migrate_from_sheets.py` — eski Google Sheets'dan bir martalik ko'chirish

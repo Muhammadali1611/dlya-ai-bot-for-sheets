@@ -1,260 +1,206 @@
-"""Google Sheets ombori.
+"""Supabase (Postgres) ombori — "eslatma" bo'limi.
 
-'Vazifalar' varag'i      — faol vazifalar (bot shu yerga yozadi)
-'Bajarilganlar' varag'i  — "bitdi" deyilgan vazifalar tarixi
+Bot o'zining alohida login'i (eslatma_bot) bilan ulanadi; boshqa jadvallarga huquqi yo'q.
 
-Ustunlar (Vazifalar):
-A №  | B Vazifa | C Turi | D Jadval | E Keyingi vaqt | F Qolgan vaqt (formula)
-G Holat | H trigger | I chat_id | J id
+Ulanish:
+  DATABASE_URL  — to'liq manzil (postgresql://...), bo'lsa shu ishlatiladi;
+  aks holda DB_PASSWORD + SUPABASE_REF (+ SUPABASE_REGION) dan Supabase pooler manzili
+  avtomatik tuziladi va bir nechta host sinab ko'riladi.
 """
 
 import os
 import json
-import threading
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import gspread
+import asyncpg
 
-TZ_NAME = os.environ.get("TZ", "Asia/Tashkent")
-TZ = ZoneInfo(TZ_NAME)
-SHEET_ID = os.environ["SHEET_ID"]
+log = logging.getLogger("reminder-bot.db")
 
-ACTIVE_SHEET = "Vazifalar"
-DONE_SHEET = "Bajarilganlar"
+TZ = ZoneInfo(os.environ.get("TZ", "Asia/Tashkent"))
 
-KIND_UZ = {"once": "bir martalik", "recurring": "takroriy", "interval": "har N vaqtda"}
-KIND_EN = {v: k for k, v in KIND_UZ.items()}
+_pool = None
 
-LEFT_FORMULA = (
-    '=IF(E{r}="","",IF(E{r}<=NOW(),"⏰ Vaqti keldi",'
-    'INT(E{r}-NOW())&" kun "&TEXT(E{r}-NOW(),"hh:mm")))'
-)
-DATE_FMT = {"numberFormat": {"type": "DATE_TIME", "pattern": "dd.mm.yyyy hh:mm"}}
-
-_lock = threading.Lock()
-_sh = None
-_active = None
-_done = None
+COLS = """id, title, kind, trigger, human_time, next_at, status, bitguncha,
+          odam_id, xabar_matni, last_fired_at, created_at"""
 
 
-def _client():
-    raw = os.environ.get("GOOGLE_CREDENTIALS")
-    if raw:
-        return gspread.service_account_from_dict(json.loads(raw))
-    return gspread.service_account(
-        filename=os.environ.get("GOOGLE_CREDENTIALS_FILE", "credentials.json")
-    )
+def _candidate_dsns():
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if url:
+        return [url]
+    pwd = os.environ.get("DB_PASSWORD", "").strip()
+    ref = os.environ.get("SUPABASE_REF", "qzemxaplmsrraojkzidz").strip()
+    region = os.environ.get("SUPABASE_REGION", "ap-northeast-2").strip()
+    user = os.environ.get("DB_USER", "eslatma_bot").strip()
+    if not pwd:
+        raise RuntimeError("DATABASE_URL yoki DB_PASSWORD Railway Variables'da yo'q.")
+    hosts = [f"aws-0-{region}.pooler.supabase.com", f"aws-1-{region}.pooler.supabase.com"]
+    # Session pooler (5432) — doimiy ulanish uchun eng mosi
+    return [f"postgresql://{user}.{ref}:{pwd}@{h}:5432/postgres" for h in hosts]
 
 
-def _fmt(dt):
-    """Sheets tushunadigan sana-vaqt (Toshkent mahalliy vaqti)."""
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(TZ)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+async def init():
+    global _pool
+    last = None
+    for dsn in _candidate_dsns():
+        host = dsn.rsplit("@", 1)[-1]
+        try:
+            _pool = await asyncpg.create_pool(
+                dsn, min_size=1, max_size=4, command_timeout=30,
+                statement_cache_size=0,  # pooler bilan xavfsiz
+                server_settings={"application_name": "eslatma-bot"},
+            )
+            async with _pool.acquire() as c:
+                await c.fetchval("select 1 from eslatma.vazifalar limit 1")
+            log.info("Bazaga ulandi: %s", host)
+            return
+        except Exception as e:  # noqa: BLE001
+            last = e
+            log.warning("Bazaga ulanib bo'lmadi (%s): %s", host, e)
+    raise RuntimeError(f"Bazaga ulanib bo'lmadi: {last}")
 
 
-def init_db():
-    global _sh, _active, _done
-    _sh = _client().open_by_key(SHEET_ID)
-    _active = _sh.worksheet(ACTIVE_SHEET)
-    _done = _sh.worksheet(DONE_SHEET)
-    # Vaqt mintaqasi Toshkent, formulalar har daqiqada yangilanadi.
-    # Locale en_US — formulalardagi vergul (,) har doim to'g'ri tushunilsin
-    # (o'zbek/rus locale'da ; kerak bo'ladi va #ERROR! chiqadi).
-    _sh.batch_update({"requests": [{
-        "updateSpreadsheetProperties": {
-            "properties": {"timeZone": TZ_NAME, "autoRecalc": "MINUTE",
-                           "locale": "en_US"},
-            "fields": "timeZone,autoRecalc,locale",
-        }
-    }]})
-    _fix_formulas()
+async def close():
+    if _pool:
+        await _pool.close()
 
 
-def _fix_formulas():
-    """Mavjud qatorlardagi № va 'Qolgan vaqt' formulalarini qayta yozadi
-    (eski #ERROR! kataklarni tuzatadi)."""
-    data = []
-    for rem in _all():
-        r = rem["row"]
-        data.append({"range": f"A{r}", "values": [["=ROW()-1"]]})
-        data.append({"range": f"F{r}", "values": [[LEFT_FORMULA.format(r=r)]]})
-    if data:
-        _active.batch_update(data, value_input_option="USER_ENTERED")
-    done = _done.get_all_values()
-    ddata = [{"range": f"A{i}", "values": [["=ROW()-1"]]}
-             for i in range(2, len(done) + 1) if any(done[i - 1])]
-    if ddata:
-        _done.batch_update(ddata, value_input_option="USER_ENTERED")
+# ---------- yordamchi ----------
+
+def _row(r):
+    d = dict(r)
+    t = d.get("trigger")
+    d["trigger"] = json.loads(t) if isinstance(t, str) else (t or {})
+    return d
 
 
-def _parse(values):
-    """Varaqdagi qatorlarni lug'atlarga aylantiradi. № = qator raqami - 1."""
+def left_text(next_at, now=None):
+    """'2 kun 03:15' yoki '⏰ Vaqti keldi'."""
+    if next_at is None:
+        return ""
+    now = now or datetime.now(TZ)
+    sec = int((next_at - now).total_seconds())
+    if sec <= 0:
+        return "⏰ Vaqti keldi"
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    return f"{d} kun {h:02d}:{m:02d}"
+
+
+def _decorate(rows):
+    """Raqam (1, 2, 3...) va AI/ro'yxat uchun qulay maydonlarni qo'shadi."""
+    now = datetime.now(TZ)
     out = []
-    for i, row in enumerate(values[1:], start=2):
-        row = (row + [""] * 10)[:10]
-        rid = row[9].strip()
-        if not rid:
-            continue
-        try:
-            rid = int(float(rid))
-            chat_id = int(float(row[8]))
-        except ValueError:
-            continue
-        out.append({
-            "row": i,
-            "num": i - 1,
-            "id": rid,
-            "title": row[1],
-            "kind": KIND_EN.get(row[2].strip(), row[2].strip()),
-            "human_time": row[3],
-            "next": row[4],
-            "left": row[5],
-            "status": row[6].strip() or "Faol",
-            "trigger_json": row[7],
-            "chat_id": chat_id,
-        })
+    for i, r in enumerate(rows, start=1):
+        d = _row(r)
+        d["num"] = i
+        nx = d["next_at"]
+        d["next"] = nx.astimezone(TZ).strftime("%d.%m.%Y %H:%M") if nx else ""
+        if d["status"] == "pauza":
+            d["left"] = "⏸ Pauza"
+        elif nx is None and d["kind"] == "once":
+            d["left"] = "⏰ Vaqti o'tgan"
+        else:
+            d["left"] = left_text(nx, now)
+        d["trigger_json"] = json.dumps(d["trigger"], ensure_ascii=False)
+        out.append(d)
     return out
-
-
-def _all():
-    return _parse(_active.get_all_values())
-
-
-def _find(rid):
-    for r in _all():
-        if r["id"] == rid:
-            return r
-    return None
-
-
-def _next_id(values):
-    ids = [0]
-    for row in values[1:]:
-        if len(row) >= 10 and row[9].strip():
-            try:
-                ids.append(int(float(row[9])))
-            except ValueError:
-                pass
-    for v in _done.col_values(6)[1:]:
-        try:
-            ids.append(int(float(v)))
-        except ValueError:
-            pass
-    return max(ids) + 1
 
 
 # ---------- o'qish ----------
 
-def all_reminders():
-    with _lock:
-        return _all()
+async def list_tasks():
+    rows = await _pool.fetch(f"select {COLS} from eslatma.vazifalar order by id")
+    return _decorate(rows)
 
 
-def list_reminders(chat_id):
-    with _lock:
-        return [r for r in _all() if r["chat_id"] == chat_id]
+async def get_task(tid):
+    for t in await list_tasks():  # raqam (num) to'g'ri chiqishi uchun
+        if t["id"] == tid:
+            return t
+    return None
 
 
-def get_reminder(rid):
-    with _lock:
-        return _find(rid)
+async def due_tasks(now):
+    rows = await _pool.fetch(
+        f"""select {COLS} from eslatma.vazifalar
+            where next_at is not null and next_at <= $1 and status <> 'pauza'
+            order by next_at""",
+        now,
+    )
+    return [_row(r) for r in rows]
+
+
+async def history(limit=100):
+    rows = await _pool.fetch(
+        "select id, vazifa_id, title, human_time, done_at, izoh from eslatma.tarix "
+        "order by done_at desc limit $1", limit)
+    return [dict(r) for r in rows]
 
 
 # ---------- yozish ----------
 
-def add_reminder(chat_id, title, kind, trigger, human_time, next_dt):
-    with _lock:
-        values = _active.get_all_values()
-        r = len(values) + 1
-        new_id = _next_id(values)
-        row = [
-            "=ROW()-1",
-            title,
-            KIND_UZ.get(kind, kind),
-            human_time,
-            _fmt(next_dt),
-            LEFT_FORMULA.format(r=r),
-            "Faol",
-            json.dumps(trigger, ensure_ascii=False),
-            str(chat_id),
-            new_id,
-        ]
-        _active.update(values=[row], range_name=f"A{r}:J{r}",
-                       value_input_option="USER_ENTERED")
-        _active.format(f"E{r}", DATE_FMT)
-        return new_id
+async def add_task(title, kind, trigger, human_time, next_at, bitguncha=False,
+                   status="faol"):
+    return await _pool.fetchval(
+        """insert into eslatma.vazifalar (title, kind, trigger, human_time, next_at, bitguncha, status)
+           values ($1, $2, $3::jsonb, $4, $5, $6, $7) returning id""",
+        title, kind, json.dumps(trigger, ensure_ascii=False), human_time, next_at,
+        bitguncha, status,
+    )
 
 
-def delete_reminder(rid):
-    with _lock:
-        rem = _find(rid)
-        if rem:
-            _active.delete_rows(rem["row"])
-        return rem
+async def delete_task(tid):
+    return await _pool.fetchval("delete from eslatma.vazifalar where id = $1 returning id", tid)
 
 
-def mark_done(rid):
-    """Vazifani Bajarilganlar varag'iga yozadi.
-    Bir martalik — Vazifalar'dan o'chadi. Takroriy — 'Bitdi' bo'lib turadi va
-    keyingi navbati kelganda (yoki oy boshida) o'zi qayta 'Faol' bo'ladi."""
-    with _lock:
-        rem = _find(rid)
-        if not rem:
+async def mark_done(tid, izoh=None):
+    """Tarixga yozadi. Bir martalik yoki 'bitguncha' vazifa — butunlay yopiladi;
+    takroriy — shu navbat uchun 'bitdi', keyingi navbatda o'zi qayta 'faol' bo'ladi."""
+    async with _pool.acquire() as c, c.transaction():
+        r = await c.fetchrow(f"select {COLS} from eslatma.vazifalar where id = $1 for update", tid)
+        if not r:
             return None
-        now = datetime.now(TZ)
-        d = len(_done.get_all_values()) + 1
-        _done.update(
-            values=[["=ROW()-1", rem["title"], rem["human_time"], _fmt(now),
-                     now.strftime("%Y-%m"), rem["id"]]],
-            range_name=f"A{d}:F{d}",
-            value_input_option="USER_ENTERED",
-        )
-        _done.format(f"D{d}", DATE_FMT)
-        if rem["kind"] == "once":
-            _active.delete_rows(rem["row"])
+        await c.execute(
+            "insert into eslatma.tarix (vazifa_id, title, human_time, izoh) values ($1, $2, $3, $4)",
+            tid, r["title"], r["human_time"], izoh)
+        if r["kind"] == "once" or r["bitguncha"]:
+            await c.execute("delete from eslatma.vazifalar where id = $1", tid)
         else:
-            _active.update(values=[["Bitdi"]], range_name=f"G{rem['row']}")
-        return rem
+            await c.execute(
+                "update eslatma.vazifalar set status = 'bitdi', updated_at = now() where id = $1", tid)
+        return _row(r)
 
 
-def after_fire(rid, next_dt=None):
-    """Eslatma yuborilgach: takroriy vazifa uchun keyingi vaqtni yangilaydi va
-    holatini yana 'Faol' qiladi (avtomatik reset)."""
-    with _lock:
-        rem = _find(rid)
-        if not rem:
-            return
-        r = rem["row"]
-        if next_dt is not None:
-            _active.update(values=[[_fmt(next_dt)]], range_name=f"E{r}",
-                           value_input_option="USER_ENTERED")
-        _active.update(values=[["Faol"]], range_name=f"G{r}")
+async def claim_fire(tid, old_next, new_next):
+    """Eslatma yuborishdan oldin navbatni 'egallaydi' (ikki marta yuborilmasin).
+    True qaytsa — yuborish kerak."""
+    res = await _pool.execute(
+        """update eslatma.vazifalar
+           set next_at = $3, last_fired_at = now(), updated_at = now(),
+               status = case when status = 'bitdi' then 'faol' else status end
+           where id = $1 and next_at = $2""",
+        tid, old_next, new_next,
+    )
+    return res.endswith(" 1")
 
 
-def refresh_next_times(mapping):
-    """{id: next_dt} — bot qayta yonganda keyingi vaqtlarni bir yo'la yangilaydi."""
-    if not mapping:
-        return
-    with _lock:
-        data = []
-        for rem in _all():
-            dt = mapping.get(rem["id"])
-            if dt is not None:
-                data.append({"range": f"E{rem['row']}", "values": [[_fmt(dt)]]})
-        if data:
-            _active.batch_update(data, value_input_option="USER_ENTERED")
+async def set_status(tid, status, next_at=None):
+    await _pool.execute(
+        "update eslatma.vazifalar set status = $2, next_at = $3, updated_at = now() where id = $1",
+        tid, status, next_at)
 
 
-def monthly_reset():
-    """Oy boshida barcha 'Bitdi' takroriy vazifalarni yana 'Faol' qiladi."""
-    with _lock:
-        data = [
-            {"range": f"G{r['row']}", "values": [["Faol"]]}
-            for r in _all()
-            if r["kind"] in ("recurring", "interval") and r["status"] == "Bitdi"
-        ]
-        if data:
-            _active.batch_update(data)
-        return len(data)
+async def set_next(tid, next_at):
+    await _pool.execute(
+        "update eslatma.vazifalar set next_at = $2, updated_at = now() where id = $1", tid, next_at)
+
+
+async def monthly_reset():
+    res = await _pool.execute(
+        "update eslatma.vazifalar set status = 'faol', updated_at = now() "
+        "where status = 'bitdi' and kind in ('recurring', 'interval')")
+    return int(res.split()[-1])

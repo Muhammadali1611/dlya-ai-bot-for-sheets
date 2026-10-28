@@ -20,7 +20,7 @@ from telegram import (
     Update, MenuButtonWebApp, WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup,
 )
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters,
 )
 from apscheduler.triggers.cron import CronTrigger
 
@@ -40,6 +40,7 @@ TZ = ZoneInfo(os.environ.get("TZ", "Asia/Tashkent"))
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 OWNER_ID = int(os.environ.get("OWNER_ID", "7242956193"))
 CHECK_EVERY = int(os.environ.get("CHECK_EVERY", "30"))  # soniya
+MORNING_AT = os.environ.get("MORNING_AT", "07:30")  # ertalabki xulosa vaqti ("off" — o'chiq)
 
 HISTORY = deque(maxlen=int(os.environ.get("HISTORY_LEN", "8")))
 TG_LIMIT = 4000
@@ -53,7 +54,7 @@ WELCOME = (
     "• har 3 kunda 11:00 omborni tekshir\n"
     "• bitmaguncha har kuni 8:00 da elevator ishini eslat\n\n"
     "«Bugun nima ishlarim bor?» deb so'rasangiz ham bo'ladi.\n\n"
-    "Bajarganingizda: «3 bitdi»\n"
+    "Bajarganingizda: eslatma ostidagi ✅ tugmasi yoki «3 bitdi»\n"
     "Ro'yxat: /list  •  Ilova: pastdagi «📋 Vazifalar» tugmasi"
 )
 
@@ -131,11 +132,21 @@ async def mark_done_ids(ids):
     return titles
 
 
+def _norm(s):
+    return re.sub(r"[^\w]+", " ", (s or "").lower()).strip()
+
+
 async def create_tasks(items):
     """AI qaytargan vazifalarni yaratadi. (yaratilganlar, xatolar) qaytaradi."""
     created, errors = [], []
+    existing = await db.list_tasks() if items else []
     for r in items or []:
         try:
+            same = next((t for t in existing if _norm(t["title"]) == _norm(r.get("title"))
+                         and t["kind"] == r.get("kind") and t["trigger"] == r.get("trigger")), None)
+            if same:
+                errors.append(f"ℹ️ «{same['title']}» allaqachon bor ({same['num']}-vazifa), qayta yozmadim.")
+                continue
             nxt = next_fire(r["kind"], r["trigger"])
             if nxt is None:
                 raise ValueError("vaqti o'tib ketgan")
@@ -179,12 +190,15 @@ async def handle_text(text):
     done_ids = [tid for tid in (result.get("ids_done") or []) if tid in own]
     if done_ids:
         await mark_done_ids(done_ids)
-    _, errors = await create_tasks(result.get("reminders_to_create"))
+    to_create = result.get("reminders_to_create") or []
+    created, errors = await create_tasks(to_create)
 
     action = result.get("action", "chat")
     reply = result.get("reply") or ""
     HISTORY.append((text, reply or f"[{action}]"))
-    if errors:
+    if errors and to_create and not created and action == "create":
+        reply = "\n".join(errors)  # hech narsa yaratilmadi — AI'ning "yozib oldim"i noto'g'ri bo'lardi
+    elif errors:
         reply = (reply + "\n\n" + "\n".join(errors)).strip()
     return reply or "Bo'ldi ✅", action == "list"
 
@@ -262,20 +276,115 @@ async def fire_due(bot):
             f"\U0001F514 {num}) {t['title']}\n"
             f"\U0001F552 {t['human_time']}"
             + (" (kechikib)" if late else "")
-            + f"\n\nBajarsangiz yozing: «{num} bitdi»"
         )
         try:
-            await bot.send_message(OWNER_ID, text)
+            await bot.send_message(OWNER_ID, text, reply_markup=reminder_kb(t["id"]))
             log.info("Eslatma yuborildi: id=%s", t["id"])
         except Exception as e:  # noqa: BLE001
             log.warning("Eslatma yuborilmadi (id=%s): %s", t["id"], e)
 
 
+def reminder_kb(tid):
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{tid}"),
+        InlineKeyboardButton("⏰ 1 soatdan keyin", callback_data=f"snz:{tid}:60"),
+        InlineKeyboardButton("📅 Ertaga", callback_data=f"snz:{tid}:tm"),
+    ]])
+
+
+async def snooze(tid, how):
+    """Eslatmani keyinga suradi. Takroriy vazifaning asosiy jadvali o'zgarmaydi:
+    navbatdagi eslatma suriladi, keyingilari odatdagidek davom etadi."""
+    t = await db.get_task(tid)
+    if not t:
+        return None
+    now = now_tz()
+    if how == "tm":
+        base = t["next_at"] if t["kind"] == "once" and t["next_at"] else None
+        if t["kind"] == "recurring":
+            hour, minute = int(t["trigger"].get("hour", 9)), int(t["trigger"].get("minute", 0))
+        elif t["kind"] == "interval" and t["trigger"].get("start"):
+            st = datetime.fromisoformat(t["trigger"]["start"])
+            hour, minute = st.hour, st.minute
+        else:
+            hour, minute = (base or now).hour, (base or now).minute
+        at = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    else:
+        at = now + timedelta(minutes=int(how))
+    if t["kind"] != "once":
+        regular = next_fire(t["kind"], t["trigger"], now=now + timedelta(seconds=1))
+        if regular and regular < at:
+            at = regular  # odatdagi navbat baribir ertaroq keladi
+    await db.set_status(tid, "faol" if t["status"] == "pauza" else t["status"], at)
+    return at
+
+
+async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not q or q.from_user.id != OWNER_ID:
+        return
+    parts = (q.data or "").split(":")
+    try:
+        tid = int(parts[1])
+    except (IndexError, ValueError):
+        await q.answer()
+        return
+    base = (q.message.text or "") if q.message else ""
+    if parts[0] == "done":
+        r = await db.mark_done(tid)
+        await q.answer("Bajarildi ✅" if r else "Bu vazifa endi yo'q")
+        if q.message:
+            await q.edit_message_text(base + ("\n\n✅ Bajarildi" if r else "\n\n— vazifa topilmadi"))
+    elif parts[0] == "snz" and len(parts) > 2:
+        at = await snooze(tid, parts[2])
+        if not at:
+            await q.answer("Bu vazifa endi yo'q")
+            return
+        when = at.astimezone(TZ)
+        label = ("ertaga " if when.date() > now_tz().date() else "") + when.strftime("%H:%M")
+        await q.answer(f"Eslataman: {label}")
+        if q.message:
+            await q.edit_message_text(base + f"\n\n⏰ Yana eslataman: {label}")
+    else:
+        await q.answer()
+
+
+async def morning_digest(bot):
+    now = now_tz()
+    tasks = await db.list_tasks()
+    today, late = [], []
+    for t in tasks:
+        if t["status"] == "pauza":
+            continue
+        if t["kind"] == "once" and t["next_at"] is None:
+            late.append(t)
+            continue
+        for hhmm in filter(None, today_times(t, now).split(", ")):
+            today.append((hhmm, t))
+    today.sort(key=lambda x: x[0])
+    if not today and not late:
+        return
+    lines = [f"☀️ Xayrli tong! Bugun {len(today)} ta ish:"] if today else ["☀️ Xayrli tong! Bugun rejada ish yo'q."]
+    lines += [f"{hhmm} — {t['num']}) {t['title']}" for hhmm, t in today]
+    if late:
+        lines += ["", f"⚠️ Muddati o'tgan, bajarilmagan ({len(late)}):"]
+        lines += [f"{t['num']}) {t['title']}" for t in late]
+        lines += ["", "Bajarilganlarini «<raqam> bitdi» deb yozing."]
+    await send_long(bot, "\n".join(lines))
+
+
 async def scheduler_loop(bot):
     last_month = now_tz().month
+    start = now_tz()
+    # Bot xulosa vaqtidan keyin yonsa — bugungisi allaqachon yuborilgan deb hisoblaymiz
+    last_digest = start.date() if start.strftime("%H:%M") >= MORNING_AT else None
     while True:
         try:
             await fire_due(bot)
+            now = now_tz()
+            if MORNING_AT != "off" and last_digest != now.date() and now.strftime("%H:%M") >= MORNING_AT:
+                last_digest = now.date()
+                await morning_digest(bot)
             m = now_tz().month
             if m != last_month:
                 n = await db.monthly_reset()
@@ -296,6 +405,7 @@ async def main():
     app.add_handler(CommandHandler("start", start, filters=owner))
     app.add_handler(CommandHandler("list", list_cmd, filters=owner))
     app.add_handler(CommandHandler("app", app_cmd, filters=owner))
+    app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(owner & filters.TEXT & ~filters.COMMAND, on_message))
     app.add_handler(MessageHandler(~owner, stranger))
     app.add_error_handler(on_error)

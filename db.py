@@ -36,7 +36,8 @@ def _candidate_dsns():
     user = os.environ.get("DB_USER", "eslatma_bot").strip()
     if not pwd:
         raise RuntimeError("DATABASE_URL yoki DB_PASSWORD Railway Variables'da yo'q.")
-    hosts = [f"aws-0-{region}.pooler.supabase.com", f"aws-1-{region}.pooler.supabase.com"]
+    # aws-1 ishlashi tasdiqlangan (28.10.2026), aws-0 zaxira
+    hosts = [f"aws-1-{region}.pooler.supabase.com", f"aws-0-{region}.pooler.supabase.com"]
     # Session pooler (5432) — doimiy ulanish uchun eng mosi
     return [f"postgresql://{user}.{ref}:{pwd}@{h}:5432/postgres" for h in hosts]
 

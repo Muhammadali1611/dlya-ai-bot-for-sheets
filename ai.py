@@ -576,3 +576,75 @@ def analyze_request(dialog, sender_name, now_str):
             data["tayyor"] = False
             data["savol"] = data.get("savol") or "Qaysi kuni soat nechada eslatay?"
     return data
+
+
+# ---------------- Suhbatdan vazifa topish (barcha shaxsiy chatlar) ----------------
+
+CHAT_RULES = """Sen — Muhammadalining shaxsiy yordamchisisan. Senga uning bitta odam bilan shaxsiy
+Telegram yozishmasining so'nggi qismi beriladi (MEN — Muhammadali, U — suhbatdosh).
+Vazifang: shu yozishmada vaqtga bog'liq, unutilmasligi kerak bo'lgan ish bormi — aniqlash.
+
+Faqat bitta JSON qaytar:
+{"vazifalar": [
+  {"kimga": "men" | "u",
+   "title": "<Muhammadali uchun qisqa nom, kim bilan bog'liqligi bilan: 'Akmal aka — pulni tekshirish'>",
+   "kind": "once" | "recurring",
+   "trigger": {...},
+   "human_time": "<'Ertaga 9:00'>",
+   "xabar": "<kimga='u' bo'lsa — o'sha odamga boradigan eslatma; 'men' bo'lsa null>",
+   "sabab": "<yozishmadagi qaysi gapdan olganing, qisqa iqtibos>"}
+]}
+Hech narsa bo'lmasa: {"vazifalar": []}
+
+Qachon vazifa qilinadi:
+1) MEN suhbatdoshga eslatishni va'da qildi: "ertaga soat 9 da eslataman", "dushanba yozaman" →
+   kimga="u", o'sha vaqtda UNGA xabar: "Akmal aka, ... eslatib qo'yaman degandim: <ish>".
+2) MEN biror ishni qilishni va'da qildi: "ertaga hisobotni tashlab beraman", "soat 3 da qo'ng'iroq
+   qilaman" → kimga="men", o'sha vaqtda Muhammadalining o'ziga eslatma.
+3) U nimanidir qilishni va'da qildi va Muhammadali buni kutyapti: "ertaga pulni o'tkazaman",
+   "juma kuni yukni jo'nataman" → kimga="men": o'sha vaqtda "<ism> ... ni va'da qilgan edi —
+   tekshiring" degan eslatma.
+4) Kelishilgan uchrashuv/qo'ng'iroq aniq vaqt bilan: "ertaga 10 da ofisda ko'rishamiz" →
+   kimga="men", 30 daqiqa oldin eslatma.
+
+Qat'iy qoidalar:
+- Faqat ANIQ vaqt (sana yoki "ertaga/bugun/dushanba" + soat) bo'lsa vazifa qil. Vaqt aniq bo'lmasa
+  ("keyinroq", "tezda", "bir kun") — vazifa QILMA.
+- "ertaga" (soatsiz) — 9:00 deb ol. "ertalab" — 9:00, "tushdan keyin" — 14:00, "kechqurun" — 18:00.
+- O'tib ketgan vaqt uchun vazifa qilma. Oddiy salomlashish, hazil, savol-javob — vazifa emas.
+- Allaqachon bajarilgan narsa ("o'tkazdim", "jo'natdim") — vazifa emas.
+- Shubha bo'lsa — vazifa QILMA. Kam, lekin aniq bo'lsin.
+- xabar aynan belgilangan VAQTDA yuboriladi — unda "ertaga", "keyin" kabi so'zlar bo'lmasin.
+  Yaxshi: "Akmal aka, eslatib qo'yaman degandim — ishga borish vaqti bo'ldi."
+- trigger: once -> {"run_date":"YYYY-MM-DDTHH:MM:00"} HOZIRGI VAQTdan hisoblab (Toshkent).
+- Matnlar o'zbekcha lotinda."""
+
+
+def analyze_chat(dialog, contact_name, now_str):
+    """dialog — [("men"|"u", matn, "HH:MM"), ...]. {"vazifalar": [...]} qaytaradi."""
+    from google.genai import types
+
+    lines = "\n".join(f"[{t}] {'MEN' if k == 'men' else 'U'}: {m}" for k, m, t in dialog)
+    text = (f"HOZIRGI VAQT (Toshkent): {now_str}\nSUHBATDOSH: {contact_name}\n\nYOZISHMA:\n{lines}")
+    config = types.GenerateContentConfig(
+        system_instruction=CHAT_RULES, temperature=0.1, response_mime_type="application/json")
+    raw = _gemini_generate([types.Content(role="user", parts=[types.Part(text=text)])], config)
+    t = (raw or "").strip()
+    a, b = t.find("{"), t.rfind("}")
+    data = json.loads(t[a:b + 1] if a != -1 and b > a else t)
+    ok = []
+    for v in data.get("vazifalar") or []:
+        try:
+            nxt = triggers.next_fire(v.get("kind"), v.get("trigger"))
+            if nxt is None or v.get("kimga") not in ("men", "u") or not v.get("title"):
+                continue
+            from datetime import datetime as _dt
+            if nxt <= _dt.now(triggers.TZ):
+                continue  # o'tib ketgan vaqt
+            if v["kimga"] == "u" and not v.get("xabar"):
+                continue
+            v["next"] = nxt
+            ok.append(v)
+        except Exception:  # noqa: BLE001
+            continue
+    return ok

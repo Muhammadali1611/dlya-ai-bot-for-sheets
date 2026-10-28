@@ -34,6 +34,17 @@ UNREAD_ALERT = int(os.environ.get("UNREAD_ALERT_MINUTES", "360"))  # o'qilmasa e
 PENDING = {}    # egasi username/raqam yozishini kutyapmiz: {"tid", "name", "until"}
 REQUESTS = {}   # boshqalar bilan eslatma so'rovi suhbati: {tg_id: {"dialog": [...], "until": dt}}
 # Faqat shu so'zlar bor xabarlar AI'ga yuboriladi (boshqa yozishmalaringiz AI'ga bormaydi)
+CHATS = {}      # suhbat bufferi: {chat_id: {"name", "msgs": [(kim, matn, dt)], "last": dt, "kiril": bool}}
+CHAT_QUIET = int(os.environ.get("CHAT_QUIET_SECONDS", "90"))      # shuncha jimlikdan keyin tahlil
+CHAT_DAILY_LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "250"))  # kuniga AI tahlillari chegarasi
+LISTEN_ALL = os.environ.get("LISTEN_ALL", "on") != "off"
+_daily = {"day": None, "n": 0}
+# Vaqt yoki va'da belgisi bo'lmagan suhbat AI'ga yuborilmaydi (limitni tejash uchun)
+ACTION_RE = re.compile(
+    r"(\d|ertaga|indin|bugun|kechqurun|ertalab|tushdan|dushanba|seshanba|chorshanba|payshanba|juma|shanba|"
+    r"yakshanba|hafta|oy oxiri|soat|eslat|beraman|qilaman|tashlayman|yuboraman|o'tkazaman|jo'nataman|"
+    r"kelaman|boraman|olib kelaman|qo'ng'iroq|ko'rishamiz|uchrashamiz|ertага|эртага|бугун|соат|"
+    r"бераман|қиламан|юбораман|ўтказаман|келаман|бораман|завтра|сегодня|в \d)", re.I)
 REMIND_RE = re.compile(r"(eslat|eslab|esla[bt]ib|esimga sol|yodimga sol|эслат|эслаб|напомн|напомин)", re.I)
 BOT = None      # telegram.Bot
 UB = None       # userbot.UserBot
@@ -44,6 +55,7 @@ def init(bot, ub, reminder_kb):
     global BOT, UB, REMINDER_KB
     BOT, UB, REMINDER_KB = bot, ub, reminder_kb
     ub.on_message = on_message
+    ub.on_outgoing = on_outgoing
 
 
 def now_tz():
@@ -182,13 +194,14 @@ async def deliver(t, num):
         await owner(f"⚠️ {who}ga yuborib bo'lmadi ({e.__class__.__name__}).\n🔔 {num}) {t['title']}",
                     REMINDER_KB(t["id"]))
         return
-    if t.get("manba") == "sorov":
-        # O'zi so'ragan eslatma — javobini kuzatmaymiz, faqat egasiga xabar
+    if t.get("manba") in ("sorov", "suhbat"):
+        # O'zi so'ragan / siz va'da qilgan eslatma — javobini kuzatmaymiz, faqat egasiga xabar
         sid = await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
         await db.update_send(sid, holat="eslatildi")
         if t["kind"] == "once":
             await db.mark_done(t["id"], izoh="o'zi so'ragan eslatma yuborildi")
-        await owner(f"📤 {who}ga eslatdim (o'zi so'ragan edi): «{msg}»")
+        why = "o'zi so'ragan edi" if t.get("manba") == "sorov" else "yozishmada va'da qilgan edingiz"
+        await owner(f"📤 {who}ga eslatdim ({why}): «{msg}»")
         return
     await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{t['id']}")]])
@@ -273,9 +286,108 @@ async def on_message(event):
         await handle_reply(event, person, s)
         return
 
-    # 3) Yangi so'rov: "...eslatib qo'ying"
+    # 3) Yangi so'rov: "...eslatib qo'ying" — darhol, suhbat ichida aniqlashtiramiz
     if text and REMIND_RE.search(text):
         await handle_request(event, text)
+        return
+
+    # 4) Qolgan hamma xabar — suhbat bufferiga, jim qolganda tahlil qilinadi
+    await _buffer(event, "u")
+
+
+# ---------- barcha shaxsiy suhbatlarni tinglash ----------
+
+async def on_outgoing(event):
+    """Siz o'zingiz yozgan xabar — suhbat bufferiga."""
+    await _buffer(event, "men")
+
+
+async def _buffer(event, who):
+    if not LISTEN_ALL:
+        return
+    text = (event.message.message or "").strip()
+    if len(text) < 4:
+        return
+    chat_id = event.chat_id
+    c = CHATS.get(chat_id)
+    if c is None:
+        ent = await event.get_chat()
+        if getattr(ent, "bot", False) or getattr(ent, "deleted", False):
+            return
+        name = " ".join(x for x in [getattr(ent, "first_name", None), getattr(ent, "last_name", None)] if x) \
+            or getattr(ent, "username", None) or "odam"
+        known = await db.get_person_by_tg(chat_id)
+        c = CHATS[chat_id] = {"name": known["ism"] if known else name, "tg_name": name, "msgs": [],
+                              "kiril": None, "username": getattr(ent, "username", None),
+                              "phone": getattr(ent, "phone", None)}
+    c["msgs"].append((who, text[:600], now_tz()))
+    c["msgs"] = c["msgs"][-25:]
+    c["last"] = now_tz()
+    if who == "u" and c["kiril"] is None:
+        c["kiril"] = is_cyrillic(text)
+
+
+async def flush_chats():
+    """Jim qolgan suhbatlarni AI bilan tahlil qiladi (har daqiqada chaqiriladi)."""
+    if not CHATS:
+        return
+    now = now_tz()
+    for chat_id in list(CHATS):
+        c = CHATS[chat_id]
+        if (now - c["last"]).total_seconds() < CHAT_QUIET:
+            continue
+        CHATS.pop(chat_id, None)
+        joined = " ".join(m for _, m, _ in c["msgs"])
+        if not ACTION_RE.search(joined):
+            continue
+        if _daily["day"] != now.date():
+            _daily.update(day=now.date(), n=0)
+        if _daily["n"] >= CHAT_DAILY_LIMIT:
+            log.warning("Suhbat tahlili kunlik chegarasiga yetdi (%s)", CHAT_DAILY_LIMIT)
+            continue
+        _daily["n"] += 1
+        try:
+            found = await asyncio.to_thread(
+                ai.analyze_chat, [(k, m, t.strftime("%H:%M")) for k, m, t in c["msgs"]], c["name"],
+                now.strftime("%Y-%m-%d %H:%M (%A)"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)
+            continue
+        if found:
+            await _save_found(chat_id, c, found)
+
+
+async def _save_found(chat_id, c, found):
+    existing = await db.list_tasks()
+    lines, buttons = [], []
+    pid = None
+    for v in found[:4]:
+        title = v["title"].strip()
+        # bir xil vazifa allaqachon bor bo'lsa — qayta yozmaymiz
+        if any(t["trigger"] == v["trigger"] and name_score(title, t["title"]) >= 0.8 for t in existing):
+            continue
+        if v["kimga"] == "u":
+            if pid is None:
+                known = await db.get_person_by_tg(chat_id)
+                if known:
+                    pid = known["id"]
+                else:
+                    pid = await db.upsert_person(chat_id, c["name"], c["tg_name"], c.get("username"), c.get("phone"))
+                    await db.set_alifbo(pid, "kiril" if c.get("kiril") else "lotin")
+            tid = await db.add_task(title, v["kind"], v["trigger"], v.get("human_time") or "", v["next"],
+                                    odam_id=pid, odam_ism=c["name"], xabar_matni=v["xabar"], manba="suhbat")
+            lines.append(f"• {when_text(v['next'])} — {c['name']}ga eslataman: «{v['xabar']}»")
+        else:
+            tid = await db.add_task(title, v["kind"], v["trigger"], v.get("human_time") or "", v["next"],
+                                    manba="suhbat")
+            lines.append(f"• {when_text(v['next'])} — sizga: {title}")
+        if v.get("sabab"):
+            lines.append(f"   ↳ «{v['sabab'][:120]}»")
+        buttons.append([InlineKeyboardButton(f"❌ Bekor: {title[:40]}", callback_data=f"del:{tid}")])
+        log.info("Suhbatdan vazifa: chat=%s vazifa=%s", chat_id, tid)
+    if lines:
+        await owner(f"👂 {c['name']} bilan yozishmangizdan vazifa oldim:\n" + "\n".join(lines),
+                    InlineKeyboardMarkup(buttons))
 
 
 async def handle_request(event, text):
@@ -385,6 +497,8 @@ async def handle_reply(event, person, s):
 
 async def _reply(event, text):
     try:
-        await event.reply(text)
+        m = await event.reply(text)
+        if UB and m is not None:
+            UB.mark_own(m.chat_id, m.id)
     except Exception as e:  # noqa: BLE001
         log.warning("Odamga javob yozib bo'lmadi: %s", e)

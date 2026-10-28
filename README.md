@@ -23,6 +23,14 @@ Botning pastidagi **📋 Vazifalar** tugmasi Telegram ichida ilova (Mini App) oc
 - Bot faqat "Odamlar" ro'yxatidagilarning, faqat vazifa yuborilgandan keyingi javoblarini ko'radi.
 - Akkaunt Mini App → Odamlar → "Akkauntni ulash" orqali ulanadi. Sessiya bazada shifrlangan.
 
+## Barcha shaxsiy suhbatlarni tinglash
+- Bot sizning barcha shaxsiy chatlaringizni (kiruvchi va o'zingiz yozgan xabarlarni) kuzatadi.
+- "Ertaga soat 9 da eslataman" deb yozsangiz — o'sha vaqtda o'sha odamga eslatma boradi.
+  "Ertaga hisobotni tashlab beraman" — sizga eslatma. "Ertaga pulni o'tkazaman" desa — tekshirish eslatmasi.
+- Suhbat 1,5 daqiqa jim qolgach birga tahlil qilinadi; vaqt/va'da belgisi yo'q suhbatlar AI'ga bormaydi.
+- Topilgan har vazifa haqida sizga xabar va "❌ Bekor" tugmasi keladi.
+- Guruhlar kuzatilmaydi. O'chirish: Railway'da LISTEN_ALL=off. Kunlik chegara: CHAT_DAILY_LIMIT (250).
+
 ## Qanday ishlaydi
 - Vazifaning keyingi vaqti bazada (`next_at`). Bot har 30 soniyada vaqti kelganlarni tekshiradi —
   qayta yonsa ham, Mini App'dan o'zgartirilsa ham hech narsa yo'qolmaydi.

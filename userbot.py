@@ -95,7 +95,9 @@ class UserBot:
         self.api_hash = os.environ.get("TG_API_HASH", "")
         self.client = None
         self.me = None
-        self.on_message = None  # async fn(event) — kuzatuv.py beradi
+        self.on_message = None  # async fn(event) — kuzatuv.py beradi (kiruvchi)
+        self.on_outgoing = None  # async fn(event) — siz o'zingiz yozgan xabarlar
+        self.own_ids = set()     # bot o'zi yuborgan xabarlar (ularni tahlil qilmaymiz)
         self._login = None  # {"client", "phone", "hash"}
         self._people_cache = (0, [])
 
@@ -139,6 +141,7 @@ class UserBot:
         self.client = client
         self.me = await client.get_me()
         client.add_event_handler(self._incoming, events.NewMessage(incoming=True))
+        client.add_event_handler(self._outgoing, events.NewMessage(outgoing=True))
         log.info("Userbot ulandi: %s", user_label(self.me))
 
     async def _incoming(self, event):
@@ -148,6 +151,21 @@ class UserBot:
             await self.on_message(event)
         except Exception as e:  # noqa: BLE001
             log.exception("Kiruvchi xabarni ishlashda xato: %s", e)
+
+    async def _outgoing(self, event):
+        if not event.is_private or not self.on_outgoing:
+            return
+        if (event.chat_id, event.id) in self.own_ids or event.chat_id == getattr(self.me, "id", None):
+            return  # bot o'zi yozgan yoki "Saqlangan xabarlar"
+        try:
+            await self.on_outgoing(event)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Chiquvchi xabarni ishlashda xato: %s", e)
+
+    def mark_own(self, chat_id, msg_id):
+        self.own_ids.add((chat_id, msg_id))
+        if len(self.own_ids) > 5000:
+            self.own_ids = set(list(self.own_ids)[-2000:])
 
     async def stop(self):
         if self.client:
@@ -297,6 +315,7 @@ class UserBot:
 
     async def send(self, uid, text, reply_to=None):
         msg = await self.client.send_message(uid, text, reply_to=reply_to)
+        self.mark_own(msg.chat_id, msg.id)
         return msg.id
 
     async def read_outbox_max(self, uid):

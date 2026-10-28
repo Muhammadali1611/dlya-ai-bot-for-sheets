@@ -443,6 +443,7 @@ async def scheduler_loop(bot):
             await fire_due(bot)
             if tick % 2 == 0:  # har daqiqada
                 await kuzatuv.followup_tick()
+                await kuzatuv.flush_chats()
             now = now_tz()
             if MORNING_AT != "off" and last_digest != now.date() and now.strftime("%H:%M") >= MORNING_AT:
                 last_digest = now.date()

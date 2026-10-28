@@ -617,18 +617,31 @@ Qat'iy qoidalar:
 - xabar aynan belgilangan VAQTDA yuboriladi — unda "ertaga", "keyin" kabi so'zlar bo'lmasin.
   Yaxshi: "Akmal aka, eslatib qo'yaman degandim — ishga borish vaqti bo'ldi."
 - trigger: once -> {"run_date":"YYYY-MM-DDTHH:MM:00"} HOZIRGI VAQTdan hisoblab (Toshkent).
-- Matnlar o'zbekcha lotinda."""
+- Matnlar o'zbekcha lotinda.
+- Ovozli xabarlarni diqqat bilan eshit: ulardagi va'da va vaqtlar ham xuddi yozilgandek hisoblanadi.
+  "sabab" ga ovozli xabardan eshitgan gapingni yoz va boshiga 🎤 qo'y."""
 
 
 def analyze_chat(dialog, contact_name, now_str):
-    """dialog — [("men"|"u", matn, "HH:MM"), ...]. {"vazifalar": [...]} qaytaradi."""
+    """dialog — [("men"|"u", matn, "HH:MM", audio|None), ...]; audio = (bytes, mime).
+    Ovozli xabarlar ham shu bitta so'rovda eshitiladi. {"vazifalar": [...]} qaytaradi."""
     from google.genai import types
 
-    lines = "\n".join(f"[{t}] {'MEN' if k == 'men' else 'U'}: {m}" for k, m, t in dialog)
-    text = (f"HOZIRGI VAQT (Toshkent): {now_str}\nSUHBATDOSH: {contact_name}\n\nYOZISHMA:\n{lines}")
+    parts = [types.Part(text=f"HOZIRGI VAQT (Toshkent): {now_str}\nSUHBATDOSH: {contact_name}\n\nYOZISHMA:")]
+    for item in dialog:
+        k, m, t = item[0], item[1], item[2]
+        audio = item[3] if len(item) > 3 else None
+        who = "MEN" if k == "men" else "U"
+        if audio:
+            parts.append(types.Part(text=f"[{t}] {who} (ovozli xabar):"))
+            parts.append(types.Part.from_bytes(data=audio[0], mime_type=audio[1]))
+            if m:
+                parts.append(types.Part(text=f"(izoh: {m})"))
+        else:
+            parts.append(types.Part(text=f"[{t}] {who}: {m}"))
     config = types.GenerateContentConfig(
         system_instruction=CHAT_RULES, temperature=0.1, response_mime_type="application/json")
-    raw = _gemini_generate([types.Content(role="user", parts=[types.Part(text=text)])], config)
+    raw = _gemini_generate([types.Content(role="user", parts=parts)], config)
     t = (raw or "").strip()
     a, b = t.find("{"), t.rfind("}")
     data = json.loads(t[a:b + 1] if a != -1 and b > a else t)

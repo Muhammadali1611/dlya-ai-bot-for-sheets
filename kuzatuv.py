@@ -38,6 +38,9 @@ CHATS = {}      # suhbat bufferi: {chat_id: {"name", "msgs": [(kim, matn, dt)], 
 CHAT_QUIET = int(os.environ.get("CHAT_QUIET_SECONDS", "90"))      # shuncha jimlikdan keyin tahlil
 CHAT_DAILY_LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "250"))  # kuniga AI tahlillari chegarasi
 LISTEN_ALL = os.environ.get("LISTEN_ALL", "on") != "off"
+LISTEN_VOICE = os.environ.get("LISTEN_VOICE", "on") != "off"
+VOICE_MAX_SEC = int(os.environ.get("VOICE_MAX_SECONDS", "300"))   # bundan uzun ovozlar olinmaydi
+VOICE_PER_CHAT = 6                                                  # bitta tahlilga ko'pi bilan
 _daily = {"day": None, "n": 0}
 # Vaqt yoki va'da belgisi bo'lmagan suhbat AI'ga yuborilmaydi (limitni tejash uchun)
 ACTION_RE = re.compile(
@@ -305,8 +308,15 @@ async def on_outgoing(event):
 async def _buffer(event, who):
     if not LISTEN_ALL:
         return
-    text = (event.message.message or "").strip()
-    if len(text) < 4:
+    m = event.message
+    text = (m.message or "").strip()
+    audio = None
+    if LISTEN_VOICE and (getattr(m, "voice", None) or getattr(m, "video_note", None)):
+        dur = getattr(getattr(m, "file", None), "duration", None) or 0
+        if dur and dur > VOICE_MAX_SEC:
+            return
+        audio = True  # yuklab olish pastda, chat tekshirilgandan keyin
+    elif len(text) < 4:
         return
     chat_id = event.chat_id
     c = CHATS.get(chat_id)
@@ -320,7 +330,18 @@ async def _buffer(event, who):
         c = CHATS[chat_id] = {"name": known["ism"] if known else name, "tg_name": name, "msgs": [],
                               "kiril": None, "username": getattr(ent, "username", None),
                               "phone": getattr(ent, "phone", None)}
-    c["msgs"].append((who, text[:600], now_tz()))
+    if audio:
+        if sum(1 for x in c["msgs"] if x[3]) >= VOICE_PER_CHAT:
+            c["msgs"] = [x for x in c["msgs"] if not x[3]] + [x for x in c["msgs"] if x[3]][1:]
+        try:
+            data = await event.download_media(bytes)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Ovozli xabarni yuklab bo'lmadi: %s", e)
+            return
+        mime = (m.file.mime_type if getattr(m, "file", None) else None) or (
+            "video/mp4" if getattr(m, "video_note", None) else "audio/ogg")
+        audio = (data, mime)
+    c["msgs"].append((who, text[:600], now_tz(), audio))
     c["msgs"] = c["msgs"][-25:]
     c["last"] = now_tz()
     if who == "u" and c["kiril"] is None:
@@ -337,8 +358,9 @@ async def flush_chats():
         if (now - c["last"]).total_seconds() < CHAT_QUIET:
             continue
         CHATS.pop(chat_id, None)
-        joined = " ".join(m for _, m, _ in c["msgs"])
-        if not ACTION_RE.search(joined):
+        joined = " ".join(m for _, m, _, _ in c["msgs"])
+        has_voice = any(a for _, _, _, a in c["msgs"])
+        if not has_voice and not ACTION_RE.search(joined):
             continue
         if _daily["day"] != now.date():
             _daily.update(day=now.date(), n=0)
@@ -348,7 +370,7 @@ async def flush_chats():
         _daily["n"] += 1
         try:
             found = await asyncio.to_thread(
-                ai.analyze_chat, [(k, m, t.strftime("%H:%M")) for k, m, t in c["msgs"]], c["name"],
+                ai.analyze_chat, [(k, m, t.strftime("%H:%M"), a) for k, m, t, a in c["msgs"]], c["name"],
                 now.strftime("%Y-%m-%d %H:%M (%A)"))
         except Exception as e:  # noqa: BLE001
             log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)

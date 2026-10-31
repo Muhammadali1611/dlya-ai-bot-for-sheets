@@ -44,6 +44,10 @@ _cooldown = {}  # model -> qachongacha ishlatilmaydi (time.time())
 # tez ro'yxat (Flash birinchi) — barcha suhbatlarni tinglash uchun (ko'p va arzon bo'lishi kerak).
 SMART_MODELS = [m.strip() for m in os.environ.get("GEMINI_SMART_MODELS", "").split(",") if m.strip()]
 _auto_done = False
+AI_MODE = os.environ.get("AI_MODE", "tejamkor").strip().lower()
+# Gemini 3 modellari javobdan oldin "o'ylaydi" va bu ham pullik — tejamkor rejimda kam o'ylaydi
+THINKING_LEVEL = os.environ.get("AI_THINKING", "low" if AI_MODE != "kuchli" else "").strip().lower()
+_no_thinking = set()  # o'ylash sozlamasini qabul qilmagan modellar
 SMART_TIMEOUT_MS = int(os.environ.get("AI_SMART_TIMEOUT_MS", "30000"))
 
 
@@ -79,10 +83,13 @@ def _auto_models():
         pro = best(lambda n: "-pro" in n)
         flash = best(lambda n: "flash" in n and "lite" not in n)
         lite = best(lambda n: "flash-lite" in n)
+        # AI_MODE: "tejamkor" (standart) — Flash buyruqlar uchun, Lite suhbatlar uchun, Pro faqat zaxira;
+        #          "kuchli" — Pro buyruqlar uchun, Flash suhbatlar uchun.
+        strong = AI_MODE == "kuchli"
         if not os.environ.get("GEMINI_MODELS") and (flash or lite):
-            GEMINI_MODELS = (flash[:2] + lite[:2]) or GEMINI_MODELS
+            GEMINI_MODELS = ((flash[:2] + lite[:2]) if strong else (lite[:1] + flash[:1] + lite[1:2])) or GEMINI_MODELS
         if not SMART_MODELS:
-            SMART_MODELS = pro[:1] + flash[:2] + lite[:1]
+            SMART_MODELS = (pro[:1] + flash[:2] + lite[:1]) if strong else (flash[:1] + pro[:1] + lite[:1])
         log.info("Aqlli tartib: %s | Tez tartib: %s", SMART_MODELS, GEMINI_MODELS)
     except Exception as e:  # noqa: BLE001
         log.warning("Modellar ro'yxatini olib bo'lmadi: %s", e)
@@ -505,8 +512,17 @@ def _gemini_generate(contents, config, smart=False):
     for model in models:
         try:
             t0 = time.time()
-            resp = _get_gclient().models.generate_content(
-                model=model, contents=contents, config=config)
+            cfg = config
+            if THINKING_LEVEL and _ver(model) >= 3 and model not in _no_thinking:
+                cfg = config.model_copy(update={"thinking_config": gtypes.ThinkingConfig(thinking_level=THINKING_LEVEL)})
+            try:
+                resp = _get_gclient().models.generate_content(model=model, contents=contents, config=cfg)
+            except gerr.APIError as e:
+                if cfg is not config and getattr(e, "code", 0) == 400 and "think" in str(e).lower():
+                    _no_thinking.add(model)
+                    resp = _get_gclient().models.generate_content(model=model, contents=contents, config=config)
+                else:
+                    raise
             log.info("AI javobi: %s, %.1f s", model, time.time() - t0)
             return resp.text or ""
         except gerr.APIError as e:

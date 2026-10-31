@@ -52,6 +52,7 @@ Bot faqat o'zining `eslatma_bot` login'i bilan ulanadi va boshqa jadvallarga huq
 | TZ | Asia/Tashkent |
 | TG_API_ID, TG_API_HASH | my.telegram.org dan (profildan yuborish uchun) |
 | MORNING_AT | ixtiyoriy, ertalabki xulosa vaqti (standart 07:30, "off" — o'chiq) |
+| AI_MODE | ixtiyoriy: "tejamkor" (standart — Flash buyruqlarga, Lite suhbatlarga) yoki "kuchli" (Pro) |
 | FOLLOWUP_MINUTES | ixtiyoriy, qayta so'rash (standart "60,180") |
 
 Mini App manzili Railway'ning public domain'idan avtomatik olinadi (Settings → Networking →

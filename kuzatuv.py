@@ -48,6 +48,16 @@ ACTION_RE = re.compile(
     r"yakshanba|hafta|oy oxiri|soat|eslat|beraman|qilaman|tashlayman|yuboraman|o'tkazaman|jo'nataman|"
     r"kelaman|boraman|olib kelaman|qo'ng'iroq|ko'rishamiz|uchrashamiz|ertага|эртага|бугун|соат|"
     r"бераман|қиламан|юбораман|ўтказаман|келаман|бораман|завтра|сегодня|в \d)", re.I)
+# Kunga bog'langan reja: "ertaga jumaga boramiz", "2 kuni bankka borish kerak" — darhol aniqlashtiramiz
+PLAN_DAY_RE = re.compile(
+    r"(ertaga|indin|dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba|keyingi hafta|"
+    r"\b\d{1,2}\s*-?\s*(kuni|sida|sana|noyabr|dekabr|yanvar)|"
+    r"эртага|индин|душанба|сешанба|чоршанба|пайшанба|жума|шанба|якшанба|\b\d{1,2}\s*-?\s*(куни|сида))", re.I)
+PLAN_ACT_RE = re.compile(
+    r"(boramiz|boraman|borish|borasiz|kelaman|kelamiz|kelish|kelasiz|uchrash|ko'rish|ko‘rish|qilamiz|qilish kerak|"
+    r"kerak|olib|beraman|berasiz|to'la|tola|yuborasiz|tayyorla|чиқамиз|борамиз|бораман|бориш|келаман|келамиз|"
+    r"учраш|кўриш|қиламиз|керак|оламиз|берасиз|тайёрла)", re.I)
+REASK_MIN = int(os.environ.get("REASK_MINUTES", "60"))   # savolga javob bo'lmasa, shuncha daqiqadan keyin yana so'raydi
 REMIND_RE = re.compile(r"(eslat|eslab|esla[bt]ib|esimga sol|yodimga sol|эслат|эслаб|напомн|напомин)", re.I)
 BOT = None      # telegram.Bot
 UB = None       # userbot.UserBot
@@ -198,13 +208,12 @@ async def deliver(t, num):
                     REMINDER_KB(t["id"]))
         return
     if t.get("manba") in ("sorov", "suhbat"):
-        # O'zi so'ragan / siz va'da qilgan eslatma — javobini kuzatmaymiz, faqat egasiga xabar
-        sid = await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
-        await db.update_send(sid, holat="eslatildi")
-        if t["kind"] == "once":
-            await db.mark_done(t["id"], izoh="o'zi so'ragan eslatma yuborildi")
-        why = "o'zi so'ragan edi" if t.get("manba") == "sorov" else "yozishmada va'da qilgan edingiz"
-        await owner(f"📤 {who}ga eslatdim ({why}): «{msg}»")
+        # Kelishilgan reja / o'zi so'ragan eslatma: yuboramiz va javobini kuzatamiz —
+        # javob bo'lmasa "shu ish nima bo'ldi?" deb o'zi so'raydi
+        await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
+        why = "kelishilgan edi" if t.get("manba") == "sorov" else "yozishmada gaplashilgan edi"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{t['id']}")]])
+        await owner(f"📤 {who}ga eslatdim ({why}):\n«{msg}»\n\nJavobini kuzataman.", kb)
         return
     await db.add_send(t["id"], t["odam_id"], msg, mid, t["odam_tg"], t["title"])
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Bajarildi", callback_data=f"done:{t['id']}")]])
@@ -220,7 +229,34 @@ FOLLOW_TEXTS = [
 ]
 
 
+async def reask_tick():
+    """Aniqlashtiruvchi savolga javob kelmasa: bir marta yana so'raydi, keyin egasiga aytadi."""
+    if not UB or not UB.connected or not REQUESTS:
+        return
+    now = now_tz()
+    for uid, req in list(REQUESTS.items()):
+        asked = req.get("asked_at")
+        if not asked or req.get("dialog", [("u", "")])[-1][0] != "men":
+            continue
+        try:
+            if not req.get("reasked") and now - asked >= timedelta(minutes=REASK_MIN):
+                q = req.get("last_q") or "Soat nechada?"
+                q2 = q if q.lower().startswith(("kechirasiz", "uzr")) else "Kechirasiz, " + q
+                mid = await UB.send(uid, for_person(q2, req.get("alifbo")), reply_to=req.get("q_msg"))
+                req.update(reasked=True, asked_at=now, until=now + timedelta(minutes=REASK_MIN * 2 + 30))
+                req["dialog"].append(("men", q2))
+                log.info("Aniqlashtirish qayta so'raldi: %s", uid)
+            elif req.get("reasked") and now - asked >= timedelta(minutes=REASK_MIN * 2):
+                REQUESTS.pop(uid, None)
+                first = next((m for k, m in req["dialog"] if k == "u"), "")
+                await owner(f"⚠️ {req.get('name', 'Odam')} vaqtini aytmadi (2 marta so'radim):\n«{first[:200]}»\n"
+                            "Kerak bo'lsa botga o'zingiz vaqtini yozing.")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Qayta so'rashda xato (%s): %s", uid, e)
+
+
 async def followup_tick():
+    await reask_tick()
     if not UB or not UB.connected:
         return
     sends = await db.open_sends()
@@ -289,10 +325,10 @@ async def on_message(event):
         await handle_reply(event, person, s)
         return
 
-    # 3) Yangi so'rov: "...eslatib qo'ying" — darhol, suhbat ichida aniqlashtiramiz
-    if text and REMIND_RE.search(text):
-        await handle_request(event, text)
-        return
+    # 3) Yangi so'rov yoki kunga bog'langan reja — darhol, suhbat ichida aniqlashtiramiz
+    if text and (REMIND_RE.search(text) or (PLAN_DAY_RE.search(text) and PLAN_ACT_RE.search(text))):
+        if await handle_request(event, text):
+            return
 
     # 4) Qolgan hamma xabar — suhbat bufferiga, jim qolganda tahlil qilinadi
     await _buffer(event, "u")
@@ -426,7 +462,7 @@ async def handle_request(event, text):
     uid = event.sender_id
     sender = await event.get_sender()
     if getattr(sender, "bot", False):
-        return
+        return False
     name = " ".join(x for x in [getattr(sender, "first_name", None), getattr(sender, "last_name", None)] if x) or "odam"
     req = REQUESTS.setdefault(uid, {"dialog": [], "kiril": is_cyrillic(text)})
     req["dialog"].append(("u", text))
@@ -437,17 +473,28 @@ async def handle_request(event, text):
     except Exception as e:  # noqa: BLE001
         log.exception("So'rovni tahlil qilib bo'lmadi: %s", e)
         REQUESTS.pop(uid, None)
-        await owner(f"💬 {name} sizdan eslatma so'radi, lekin AI tushuna olmadi:\n«{text}»")
-        return
+        if REMIND_RE.search(text):
+            await owner(f"💬 {name} sizdan eslatma so'radi, lekin AI tushuna olmadi:\n«{text}»")
+            return True
+        return False
     if not r.get("sorov"):
+        was_dialog = len(req["dialog"]) > 1
         REQUESTS.pop(uid, None)
-        return
+        return was_dialog  # suhbat o'rtasida bekor qilingan bo'lsa ham — bu xabar ishlandi
     alifbo = "kiril" if req["kiril"] else "lotin"
+    if existed_alifbo := (await db.get_person_by_tg(uid) or {}).get("alifbo"):
+        alifbo = existed_alifbo
     if not r.get("tayyor"):
-        q = r.get("savol") or "Qaysi kuni soat nechada eslatay?"
+        q = r.get("savol") or "Qaysi kuni soat nechada?"
         req["dialog"].append(("men", q))
-        await _reply(event, for_person(q, alifbo))
-        return
+        req.update(name=name, alifbo=alifbo, asked_at=now_tz(), last_q=q,
+                   until=now_tz() + timedelta(minutes=REASK_MIN * 3 + 30))
+        m = await _reply(event, for_person(q, alifbo))
+        req["q_msg"] = getattr(m, "id", None)
+        if not req.get("told_owner"):
+            req["told_owner"] = True
+            await owner(f"💬 {name}: «{text[:200]}»\n↳ Aniqlashtiryapman: «{q}»")
+        return True
 
     REQUESTS.pop(uid, None)
     existed = await db.get_person_by_tg(uid)
@@ -464,9 +511,10 @@ async def handle_request(event, text):
                             xabar_matni=r.get("xabar") or None, manba="sorov")
     await _reply(event, for_person(r.get("javob") or "Xo'p, eslataman.", alifbo))
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Bekor qilish", callback_data=f"del:{tid}")]])
-    await owner(f"🙋 {name} sizdan eslatishni so'radi — qabul qildim:\n"
+    await owner(f"🙋 {name} bilan kelishildi — vazifa yozdim, vaqtida unga o'zim yozaman:\n"
                 f"«{r.get('xabar') or r.get('title')}»\n🕒 {r.get('human_time')} ({when_text(nxt)})", kb)
     log.info("So'rov qabul qilindi: odam=%s vazifa=%s", pid, tid)
+    return True
 
 
 async def handle_reply(event, person, s):
@@ -532,5 +580,7 @@ async def _reply(event, text):
         m = await event.reply(text)
         if UB and m is not None:
             UB.mark_own(m.chat_id, m.id)
+        return m
     except Exception as e:  # noqa: BLE001
         log.warning("Odamga javob yozib bo'lmadi: %s", e)
+        return None

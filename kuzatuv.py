@@ -54,6 +54,8 @@ def _drop(uid, req):
         REQUESTS.pop(uid, None)
 # Faqat shu so'zlar bor xabarlar AI'ga yuboriladi (boshqa yozishmalaringiz AI'ga bormaydi)
 CHATS = {}      # suhbat bufferi: {chat_id: {"name", "msgs": [(kim, matn, dt)], "last": dt, "kiril": bool}}
+HIST = {}       # tahlil qilingan suhbat matni (kontekst uchun): {chat_id: [(kim, matn, dt), ...]}
+HIST_HOURS = int(os.environ.get("CHAT_HISTORY_HOURS", "12"))
 CHAT_QUIET = int(os.environ.get("CHAT_QUIET_SECONDS", "90"))      # shuncha jimlikdan keyin tahlil
 CHAT_DAILY_LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "800"))  # kuniga AI tahlillari chegarasi
 LISTEN_ALL = os.environ.get("LISTEN_ALL", "on") != "off"
@@ -426,7 +428,9 @@ async def flush_chats():
         CHATS.pop(chat_id, None)
         joined = " ".join(m for _, m, _, _ in c["msgs"])
         has_voice = any(a for _, _, _, a in c["msgs"])
+        hist = [h for h in HIST.get(chat_id, []) if now - h[2] < timedelta(hours=HIST_HOURS)][-30:]
         if not has_voice and not ACTION_RE.search(joined):
+            _remember(chat_id, hist, c["msgs"], [])
             continue
         if _daily["day"] != now.date():
             _daily.update(day=now.date(), n=0)
@@ -434,10 +438,21 @@ async def flush_chats():
             log.warning("Suhbat tahlili kunlik chegarasiga yetdi (%s)", CHAT_DAILY_LIMIT)
             continue
         _daily["n"] += 1
+        dialog = [(k, m, t.strftime("%H:%M"), a) for k, m, t, a in c["msgs"]]
+        hist_in = [(k, m, t.strftime("%d.%m %H:%M")) for k, m, t in hist]
+        now_s = now.strftime("%Y-%m-%d %H:%M (%A)")
+        heard = {}
         try:
-            found = await asyncio.to_thread(
-                ai.analyze_chat, [(k, m, t.strftime("%H:%M"), a) for k, m, t, a in c["msgs"]], c["name"],
-                now.strftime("%Y-%m-%d %H:%M (%A)"))
+            # 1-bosqich: arzon model — umuman vazifa bormi?
+            found = await asyncio.to_thread(ai.analyze_chat, dialog, c["name"], now_s,
+                                            history=hist_in, out=heard)
+            if found:
+                # 2-bosqich: vazifa bor — aqlli model butun suhbatni o'qib, aniq va to'liq yozadi
+                try:
+                    found = await asyncio.to_thread(ai.analyze_chat, dialog, c["name"], now_s,
+                                                    history=hist_in, smart=True, out=heard) or found
+                except Exception as e2:  # noqa: BLE001
+                    log.warning("Aqlli tahlil bo'lmadi, oddiysi olinadi: %s", e2)
         except Exception as e:  # noqa: BLE001
             if not c.get("retried"):
                 # Yo'qolib ketmasin: 2 daqiqadan keyin yana bir marta urinamiz
@@ -451,8 +466,26 @@ async def flush_chats():
             else:
                 log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)
             continue
+        _remember(chat_id, hist, c["msgs"], heard.get("eshitilgan") or [])
         if found:
             await _save_found(chat_id, c, found)
+
+
+def _remember(chat_id, hist, msgs, heard):
+    """Tahlil qilingan xabarlarni keyingi tahlillar uchun kontekst sifatida saqlaydi."""
+    heard = list(heard)
+    for k, m, t, a in msgs:
+        if a:
+            txt = "🎤 " + (heard.pop(0) if heard else "(ovozli xabar)")
+            if m:
+                txt += f" ({m})"
+        else:
+            txt = m
+        hist.append((k, txt[:400], t))
+    HIST[chat_id] = hist[-30:]
+    if len(HIST) > 400:  # xotira o'smasin
+        for cid in sorted(HIST, key=lambda x: HIST[x][-1][2] if HIST[x] else now_tz())[:100]:
+            HIST.pop(cid, None)
 
 
 async def _save_found(chat_id, c, found):

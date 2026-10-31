@@ -718,6 +718,12 @@ Faqat bitta JSON qaytar:
    "sabab": "<yozishmadagi qaysi gapdan olganing, qisqa iqtibos>"}
 ]}
 Hech narsa bo'lmasa: {"vazifalar": []}
+Yozishmada ovozli xabarlar bo'lsa, JSON ga yana "eshitilgan": ["<1-ovozli xabar matni>", ...] qo'sh
+(tartib bilan, so'zma-so'z, qisqa) — keyingi tahlillarda kontekst bo'ladi.
+
+KONTEKST: "OLDINGI SUHBAT" — avval tahlil qilingan qism, faqat nima haqida gap ketayotganini tushunish
+uchun. Vazifani faqat "YANGI XABARLAR" dagi gapdan ol (oldingi qismdagi vazifalar allaqachon olingan),
+lekin title va xabarni BUTUN suhbatdan kelib chiqib to'liq va aniq yoz.
 
 Qachon vazifa qilinadi:
 1) MEN suhbatdoshga eslatishni va'da qildi: "ertaga soat 9 da eslataman", "dushanba yozaman" →
@@ -729,6 +735,15 @@ Qachon vazifa qilinadi:
    tekshiring" degan eslatma.
 4) Kelishilgan uchrashuv/qo'ng'iroq aniq vaqt bilan: "ertaga 10 da ofisda ko'rishamiz" →
    kimga="men", 30 daqiqa oldin eslatma.
+5) U Muhammadalidan biror ishni qilib berishni so'radi va vaqt aytdi: "ertaga ertalab yangilab
+   tashlang", "dushanba hisobotni yuboring" → kimga="men".
+
+title qanday bo'lsin — eng muhimi:
+- Muhammadali 2 hafta keyin o'qisa ham darrov tushunadigan bo'lsin: NIMA qilish, KIM uchun, NIMA
+  asosida. Suhbatdagi hujjat, raqam, ism, sabablardan foydalan.
+- Yomon: "Ertaga ertalab yangilash", "Abbosxon aka — tashlash".
+- Yaxshi: "Abbosxon akaga kirim foizi jadvalini yangilab tashlash (Abduqodir aka agentlarga tashlab
+  berilgan summani ertalab aytgach)".
 
 Qat'iy qoidalar:
 - Faqat ANIQ vaqt (sana yoki "ertaga/bugun/dushanba" + soat) bo'lsa vazifa qil. Vaqt aniq bo'lmasa
@@ -745,12 +760,17 @@ Qat'iy qoidalar:
   "sabab" ga ovozli xabardan eshitgan gapingni yoz va boshiga 🎤 qo'y."""
 
 
-def analyze_chat(dialog, contact_name, now_str):
-    """dialog — [("men"|"u", matn, "HH:MM", audio|None), ...]; audio = (bytes, mime).
-    Ovozli xabarlar ham shu bitta so'rovda eshitiladi. {"vazifalar": [...]} qaytaradi."""
+def analyze_chat(dialog, contact_name, now_str, history=None, smart=False, out=None):
+    """dialog — YANGI xabarlar: [("men"|"u", matn, "HH:MM", audio|None), ...]; audio = (bytes, mime).
+    history — oldingi suhbat matni [("men"|"u", matn, "HH:MM"), ...] (faqat kontekst).
+    out — dict berilsa, ovozli xabarlar matni out["eshitilgan"] ga yoziladi."""
     from google.genai import types
 
-    parts = [types.Part(text=f"HOZIRGI VAQT (Toshkent): {now_str}\nSUHBATDOSH: {contact_name}\n\nYOZISHMA:")]
+    parts = [types.Part(text=f"HOZIRGI VAQT (Toshkent): {now_str}\nSUHBATDOSH: {contact_name}\n")]
+    if history:
+        parts.append(types.Part(text="OLDINGI SUHBAT (faqat kontekst):\n" + "\n".join(
+            f"[{h[2]}] {'MEN' if h[0] == 'men' else 'U'}: {h[1]}" for h in history)))
+    parts.append(types.Part(text="\nYANGI XABARLAR:"))
     for item in dialog:
         k, m, t = item[0], item[1], item[2]
         audio = item[3] if len(item) > 3 else None
@@ -764,10 +784,12 @@ def analyze_chat(dialog, contact_name, now_str):
             parts.append(types.Part(text=f"[{t}] {who}: {m}"))
     config = types.GenerateContentConfig(
         system_instruction=CHAT_RULES, temperature=0.1, response_mime_type="application/json")
-    raw = _gemini_generate([types.Content(role="user", parts=parts)], config)
+    raw = _gemini_generate([types.Content(role="user", parts=parts)], config, smart=smart)
     t = (raw or "").strip()
     a, b = t.find("{"), t.rfind("}")
     data = json.loads(t[a:b + 1] if a != -1 and b > a else t)
+    if out is not None:
+        out["eshitilgan"] = [str(x) for x in (data.get("eshitilgan") or []) if x]
     ok = []
     for v in data.get("vazifalar") or []:
         try:

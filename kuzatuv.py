@@ -32,7 +32,26 @@ GIVE_UP_AFTER = int(os.environ.get("GIVE_UP_MINUTES", "60"))   # oxirgi so'rovda
 UNREAD_ALERT = int(os.environ.get("UNREAD_ALERT_MINUTES", "360"))  # o'qilmasa egasiga xabar
 
 PENDING = {}    # egasi username/raqam yozishini kutyapmiz: {"tid", "name", "until"}
-REQUESTS = {}   # boshqalar bilan eslatma so'rovi suhbati: {tg_id: {"dialog": [...], "until": dt}}
+REQUESTS = {}   # aniqlashtirilayotgan so'rovlar: {tg_id: [{"dialog": [...], "until": dt, "q_msg": id}, ...]}
+
+
+def _active(uid):
+    """Shu odam bilan hali tugamagan so'rovlar (eskirganlari tashlanadi)."""
+    now = now_tz()
+    lst = [r for r in REQUESTS.get(uid, []) if r.get("until") and now < r["until"]]
+    if lst:
+        REQUESTS[uid] = lst
+    else:
+        REQUESTS.pop(uid, None)
+    return lst
+
+
+def _drop(uid, req):
+    lst = [r for r in REQUESTS.get(uid, []) if r is not req]
+    if lst:
+        REQUESTS[uid] = lst
+    else:
+        REQUESTS.pop(uid, None)
 # Faqat shu so'zlar bor xabarlar AI'ga yuboriladi (boshqa yozishmalaringiz AI'ga bormaydi)
 CHATS = {}      # suhbat bufferi: {chat_id: {"name", "msgs": [(kim, matn, dt)], "last": dt, "kiril": bool}}
 CHAT_QUIET = int(os.environ.get("CHAT_QUIET_SECONDS", "90"))      # shuncha jimlikdan keyin tahlil
@@ -56,7 +75,8 @@ PLAN_DAY_RE = re.compile(
 PLAN_ACT_RE = re.compile(
     r"(boramiz|boraman|borish|borasiz|kelaman|kelamiz|kelish|kelasiz|uchrash|ko'rish|ko‘rish|qilamiz|qilish kerak|"
     r"kerak|olib|beraman|berasiz|to'la|tola|yuborasiz|tayyorla|чиқамиз|борамиз|бораман|бориш|келаман|келамиз|"
-    r"учраш|кўриш|қиламиз|керак|оламиз|берасиз|тайёрла)", re.I)
+    r"yeymiz|ovqat|gaplashamiz|chiqamiz|ketamiz|yig'ilamiz|majlis|"
+    r"учраш|кўриш|қиламиз|керак|оламиз|берасиз|тайёрла|еймиз|овқат|гаплашамиз|кетамиз)", re.I)
 REASK_MIN = int(os.environ.get("REASK_MINUTES", "60"))   # savolga javob bo'lmasa, shuncha daqiqadan keyin yana so'raydi
 REMIND_RE = re.compile(r"(eslat|eslab|esla[bt]ib|esimga sol|yodimga sol|эслат|эслаб|напомн|напомин)", re.I)
 BOT = None      # telegram.Bot
@@ -234,7 +254,7 @@ async def reask_tick():
     if not UB or not UB.connected or not REQUESTS:
         return
     now = now_tz()
-    for uid, req in list(REQUESTS.items()):
+    for uid, req in [(u, r) for u, lst in list(REQUESTS.items()) for r in list(lst)]:
         asked = req.get("asked_at")
         if not asked or req.get("dialog", [("u", "")])[-1][0] != "men":
             continue
@@ -247,7 +267,7 @@ async def reask_tick():
                 req["dialog"].append(("men", q2))
                 log.info("Aniqlashtirish qayta so'raldi: %s", uid)
             elif req.get("reasked") and now - asked >= timedelta(minutes=REASK_MIN * 2):
-                REQUESTS.pop(uid, None)
+                _drop(uid, req)
                 first = next((m for k, m in req["dialog"] if k == "u"), "")
                 await owner(f"⚠️ {req.get('name', 'Odam')} vaqtini aytmadi (2 marta so'radim):\n«{first[:200]}»\n"
                             "Kerak bo'lsa botga o'zingiz vaqtini yozing.")
@@ -311,24 +331,34 @@ async def on_message(event):
     uid = event.sender_id
     text = (event.message.message or "").strip()
 
-    # 1) Davom etayotgan eslatma so'rovi suhbati
-    req = REQUESTS.get(uid)
-    if req and now_tz() < req["until"] and text:
-        await handle_request(event, text)
-        return
-    REQUESTS.pop(uid, None)
+    reqs = _active(uid) if text else []
+    # Ochiq savol bo'lsa, kun so'zi bor har xabarni avval yangi reja deb ko'ramiz
+    # ("4 kuni soat 3da ovqat yeymiz"); reja bo'lmasa — ochiq savolga javob sifatida olinadi
+    is_new = bool(text) and bool(REMIND_RE.search(text) or (
+        PLAN_DAY_RE.search(text) and (PLAN_ACT_RE.search(text) or reqs)))
 
-    # 2) Biz yuborgan vazifaga javob
+    # 1) Bizning aniqlashtiruvchi savolimizga reply qilib javob berdi
+    rto = event.reply_to_msg_id
+    pick = next((r for r in reqs if rto and r.get("q_msg") == rto), None)
+    if pick:
+        await handle_request(event, text, pick)
+        return
+
+    # 2) Yangi so'rov yoki kunga bog'langan reja — alohida suhbat sifatida aniqlashtiramiz
+    if is_new and await handle_request(event, text):
+        return
+
+    # 3) Ochiq savolimiz bor ("soat nechada?") — oddiy javob ("10da") eng oxirgi savolga tegishli
+    if reqs:
+        await handle_request(event, text, reqs[-1])
+        return
+
+    # 4) Biz yuborgan vazifaga javob
     person = await db.get_person_by_tg(uid)
     s = await db.open_send_for(person["id"], event.reply_to_msg_id) if person else None
     if s:
         await handle_reply(event, person, s)
         return
-
-    # 3) Yangi so'rov yoki kunga bog'langan reja — darhol, suhbat ichida aniqlashtiramiz
-    if text and (REMIND_RE.search(text) or (PLAN_DAY_RE.search(text) and PLAN_ACT_RE.search(text))):
-        if await handle_request(event, text):
-            return
 
     # 4) Qolgan hamma xabar — suhbat bufferiga, jim qolganda tahlil qilinadi
     await _buffer(event, "u")
@@ -458,13 +488,15 @@ async def _save_found(chat_id, c, found):
                     InlineKeyboardMarkup(buttons))
 
 
-async def handle_request(event, text):
+async def handle_request(event, text, req=None):
     uid = event.sender_id
     sender = await event.get_sender()
     if getattr(sender, "bot", False):
         return False
     name = " ".join(x for x in [getattr(sender, "first_name", None), getattr(sender, "last_name", None)] if x) or "odam"
-    req = REQUESTS.setdefault(uid, {"dialog": [], "kiril": is_cyrillic(text)})
+    if req is None:
+        req = {"dialog": [], "kiril": is_cyrillic(text)}
+        REQUESTS.setdefault(uid, []).append(req)
     req["dialog"].append(("u", text))
     req["until"] = now_tz() + timedelta(minutes=30)
     try:
@@ -472,14 +504,14 @@ async def handle_request(event, text):
                                     now_tz().strftime("%Y-%m-%d %H:%M (%A)"))
     except Exception as e:  # noqa: BLE001
         log.exception("So'rovni tahlil qilib bo'lmadi: %s", e)
-        REQUESTS.pop(uid, None)
+        _drop(uid, req)
         if REMIND_RE.search(text):
             await owner(f"💬 {name} sizdan eslatma so'radi, lekin AI tushuna olmadi:\n«{text}»")
             return True
         return False
     if not r.get("sorov"):
         was_dialog = len(req["dialog"]) > 1
-        REQUESTS.pop(uid, None)
+        _drop(uid, req)
         return was_dialog  # suhbat o'rtasida bekor qilingan bo'lsa ham — bu xabar ishlandi
     alifbo = "kiril" if req["kiril"] else "lotin"
     if existed_alifbo := (await db.get_person_by_tg(uid) or {}).get("alifbo"):
@@ -496,7 +528,7 @@ async def handle_request(event, text):
             await owner(f"💬 {name}: «{text[:200]}»\n↳ Aniqlashtiryapman: «{q}»")
         return True
 
-    REQUESTS.pop(uid, None)
+    _drop(uid, req)
     existed = await db.get_person_by_tg(uid)
     if existed:
         pid, name = existed["id"], existed["ism"]

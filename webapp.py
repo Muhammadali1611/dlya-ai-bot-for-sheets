@@ -73,6 +73,8 @@ def _task_json(t):
         "odam": t.get("odam") or t.get("odam_ism"), "odam_tanlangan": bool(t.get("odam_id")),
         "odam_id": t.get("odam_id"), "xabar": t.get("xabar_matni"),
         "form": triggers.to_form(t["kind"], t["trigger"]),
+        "manba": t.get("manba") or "men",
+        "last_fired_at": t["last_fired_at"].isoformat() if t.get("last_fired_at") else None,
     }
 
 

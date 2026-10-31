@@ -6,7 +6,7 @@
 <title>Vazifalar</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: var(--tg-theme-bg-color, #ffffff);
@@ -25,6 +25,7 @@
     --num: "Barlow Condensed", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; background: var(--bg2); color: var(--text);
     font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
   body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
@@ -161,9 +162,98 @@
   .act.del { background: color-mix(in srgb, var(--late) 13%, transparent); color: var(--late); }
 
   @media (prefers-reduced-motion: reduce) { .row.gone { animation: none; opacity: 0; } .toast, .sheet, .shade, .hero { transition: none; } }
+
+  /* =========================================================
+     KATTA EKRAN (kompyuter, 24" monitor): boshqaruv paneli
+     ========================================================= */
+  .brand, .kpis, .board { display: none; }
+  body.desk { --side: 300px; font: 17px/1.45 "Inter", system-ui, "Segoe UI", sans-serif; padding: 0;
+    display: grid; grid-template-columns: var(--side) minmax(0, 1fr); grid-template-rows: auto auto 1fr;
+    min-height: 100vh; font-variant-numeric: tabular-nums; }
+  body.desk { --num: "Inter", system-ui, sans-serif; }
+  .desk .brand { display: flex; flex-direction: column; gap: 4px; grid-column: 1; grid-row: 1;
+    background: var(--bg); padding: 26px 22px 10px; }
+  .desk .brand b { font-size: 22px; letter-spacing: -.01em; }
+  .desk .brand .clock { font-size: 15px; color: var(--hint); }
+  .desk .brand .fs { align-self: flex-start; margin-top: 10px; border: 1.5px solid var(--sep); background: transparent;
+    border-radius: 10px; padding: 7px 12px; cursor: pointer; font-size: 14px; color: var(--hint); }
+  .desk .seg { grid-column: 1; grid-row: 2; flex-direction: column; background: var(--bg); margin: 0; padding: 10px 14px; border-radius: 0; gap: 4px; }
+  .desk .seg button { text-align: left; padding: 12px 14px; font-size: 17px; border-radius: 12px; }
+  .desk .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); box-shadow: none; }
+  .desk .bar { position: static; grid-column: 1; grid-row: 3; flex-direction: column; align-items: stretch; align-content: start;
+    border: 0; padding: 14px 18px 24px; gap: 10px; background: var(--bg); align-self: stretch; }
+  .desk .bar::before { content: "Yangi vazifa"; font-size: 13px; font-weight: 650; color: var(--hint); text-transform: uppercase; letter-spacing: .06em; }
+  .desk .bar input { flex: none; border-radius: 12px; padding: 13px 14px; font-size: 16px; }
+  .desk .round { width: 100%; height: 46px; border-radius: 12px; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .desk .round.send-b::after { content: " AI'ga yuborish"; font-size: 15px; }
+  .desk .round.plus::after { content: " Forma orqali"; font-size: 15px; }
+  .desk .hero { grid-column: 2; grid-row: 1; margin: 22px 28px 0; border-radius: 20px; padding: 22px 28px;
+    display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto auto; column-gap: 28px; align-items: center; }
+  .desk .hero-label { grid-column: 1; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
+  .desk .hero-title { grid-column: 1; font-size: 26px; font-weight: 700; }
+  .desk .hero-when { grid-column: 1; font-size: 17px; margin-top: 6px; }
+  .desk .hero-who { grid-column: 1; justify-self: start; font-size: 15px; padding: 4px 12px; }
+  .desk .hero-clock { grid-column: 2; grid-row: 1 / span 4; font-size: 64px; margin: 0; text-align: right; }
+  .desk .hero-clock .u { font-size: 22px; }
+  .desk main { grid-column: 2; grid-row: 2 / span 2; padding: 0 28px 40px; min-width: 0; }
+
+  .desk .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 20px 0 22px; }
+  .kpi { background: var(--bg); border-radius: 18px; padding: 16px 20px; border-left: 6px solid var(--kc); }
+  .kpi .v { font-size: 40px; font-weight: 750; line-height: 1.05; color: var(--kc); }
+  .kpi .k { font-size: 15px; color: var(--hint); margin-top: 4px; }
+  .desk .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 18px; align-items: start; }
+  .col { background: color-mix(in srgb, var(--bg) 55%, transparent); border-radius: 20px; padding: 14px; min-width: 0; }
+  .col > h2 { display: flex; align-items: center; gap: 10px; margin: 4px 6px 12px; font-size: 19px; font-weight: 700; }
+  .col > h2::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--gc); }
+  .col > h2 .cnt { margin-left: auto; font-size: 15px; font-weight: 650; color: var(--gc);
+    background: color-mix(in srgb, var(--gc) 13%, transparent); border-radius: 999px; padding: 2px 11px; }
+  .g-soon-c { --gc: var(--soon); }
+  .col .sub { font-size: 13px; font-weight: 700; color: var(--gc); text-transform: uppercase; letter-spacing: .06em; margin: 14px 8px 8px; }
+  .col .none { color: var(--hint); font-size: 15px; padding: 14px 8px; }
+  .tc { position: relative; background: var(--bg); border-radius: 16px; padding: 14px 16px 14px 20px; margin-bottom: 10px;
+    cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: transform .12s, box-shadow .12s; }
+  .tc::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 5px; border-radius: 0 5px 5px 0; background: var(--gc); }
+  .tc:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+  .tc.paused { opacity: .6; }
+  .tc .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .tc .num { font-size: 14px; font-weight: 650; color: var(--hint); }
+  .tc .badge { font-size: 12.5px; font-weight: 650; border-radius: 999px; padding: 2px 9px; color: var(--hint); background: var(--bg2); }
+  .tc .badge.b-bit { color: #b45309; background: color-mix(in srgb, var(--soon) 16%, transparent); }
+  .tc .badge.b-chat { color: var(--tomorrow); background: color-mix(in srgb, var(--tomorrow) 13%, transparent); }
+  .tc .tm { margin-left: auto; font-size: 18px; font-weight: 750; color: var(--gc); white-space: nowrap; }
+  .tc.soon .tm { color: #fff; background: var(--soon); border-radius: 9px; padding: 1px 9px; }
+  .tc .ttl { font-size: 18px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+  .tc .ln { font-size: 15px; color: var(--hint); margin-top: 6px; display: flex; gap: 8px; align-items: baseline; }
+  .tc .ln.who { color: var(--accent); font-weight: 600; }
+  .tc .ln.who.me { color: var(--hint); font-weight: 500; }
+  .tc .ln.who.pending { color: #b45309; }
+  .tc .ok { position: absolute; right: 12px; bottom: 12px; border: 0; border-radius: 10px; padding: 7px 12px; font-size: 14px; font-weight: 650;
+    cursor: pointer; color: var(--later); background: color-mix(in srgb, var(--later) 14%, transparent); opacity: 0; transition: opacity .15s; }
+  .tc:hover .ok, .tc .ok:focus-visible { opacity: 1; }
+  .sc { background: var(--bg); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+  .sc .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .sc .who { font-size: 17px; font-weight: 700; }
+  .sc .m { font-size: 15px; margin-top: 6px; overflow-wrap: anywhere; }
+  .sc .r { font-size: 14px; color: var(--hint); margin-top: 6px; }
+  .sc .st { font-size: 13.5px; padding: 2px 10px; }
+
+  .desk .group { margin-top: 22px; } .desk .list { margin: 0; } .desk .card { margin: 22px 0 0; }
+  .desk .group h2 { margin: 0 6px 10px; font-size: 18px; }
+  .desk .row { padding: 14px 18px 14px 20px; } .desk .row .t { font-size: 17px; } .desk .row .h { font-size: 15px; }
+  .desk .seg + main .empty-state { font-size: 17px; }
+  .desk .toast { left: auto; right: 28px; bottom: 28px; max-width: 460px; font-size: 16px; }
+  .desk .sheet { left: 50%; right: auto; top: 50%; bottom: auto; width: 600px; max-height: 88vh; border-radius: 22px;
+    padding: 22px 26px 26px; transform: translate(-50%, -46%) scale(.98); opacity: 0;
+    transition: transform .2s, opacity .2s, visibility 0s linear .2s; }
+  .desk .open .sheet { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
+  .desk .grab { display: none; }
+  .desk .sheet h3 { font-size: 22px; }
+  .desk .lbl { font-size: 14px; }
+  @media (min-width: 1700px) { body.desk { --side: 320px; font-size: 18px; } .tc .ttl { font-size: 19px; } }
 </style>
 </head>
 <body>
+<div class="brand"><b>📋 Vazifalar</b><span class="clock" id="deskClock"></span><button class="fs" id="fsBtn" type="button" hidden>⛶ To'liq ekran</button></div>
 <section class="hero empty" id="hero" aria-live="polite">
   <p class="hero-label">Navbatdagi ish</p>
   <p class="hero-title" id="heroTitle">Yuklanmoqda…</p>
@@ -218,7 +308,7 @@
 
     <div id="fTimeBox"><label class="lbl" for="fVaqt">Soat</label><input class="inp" type="time" id="fVaqt" value="09:00"></div>
 
-    <label class="switch" id="fBitBox"><span>Bitmaguncha eslatish<small>«Bajarildi» deyilganda butunlay yopiladi</small></span>
+    <label class="switch" id="fBitBox"><span>Bajarilguncha har gal eslatish<small>«Bajarildi» deyilganda butunlay yopiladi</small></span>
       <span class="tog"><input type="checkbox" id="fBit"><span></span></span></label>
 
     <label class="lbl" for="fOdam">Kimga</label>
@@ -232,7 +322,7 @@
     <button class="btn save" id="fSave" type="submit">Saqlash</button>
     <div class="acts" id="fActs" hidden>
       <button type="button" class="act done" data-act="done">✅ Bajarildi</button>
-      <button type="button" class="act pause" data-act="pause" id="fPauseBtn">⏸ Pauza</button>
+      <button type="button" class="act pause" data-act="pause" id="fPauseBtn">⏸ To'xtatish</button>
       <button type="button" class="act del" data-act="delete">🗑 O'chirish</button>
     </div>
   </form>
@@ -263,6 +353,7 @@ const hm = d => d.toLocaleTimeString("en-GB", { timeZone: TZ, hour: "2-digit", m
 const dm = d => { const [, m, dd] = dayKey(d).split("-"); return `${+dd}-${OYLAR[+m - 1]}`; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pad = n => String(n).padStart(2, "0");
+const ht = s => String(s || "").replace(/\s*\(?\bbitguncha\)?/gi, " (bajarilguncha)").replace(/\s+/g, " ").trim();
 function parts(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 }; }
 function leftShort(ms) { if (ms <= 0) return "hozir"; const p = parts(ms); return p.d ? `${p.d} kun ${p.h} s` : p.h ? `${p.h} s ${p.m} daq` : `${p.m} daq`; }
 
@@ -274,10 +365,10 @@ function groupOf(t, now) {
   if (k === dayKey(new Date(now.getTime() + 864e5))) return "tomorrow";
   return "later";
 }
-const GROUPS = [["late", "Muddati o'tgan"], ["today", "Bugun"], ["tomorrow", "Ertaga"], ["later", "Keyinroq"], ["pauza", "Pauzada"]];
+const GROUPS = [["late", "Vaqti o'tgan"], ["today", "Bugun"], ["tomorrow", "Ertaga"], ["later", "Keyinroq"], ["pauza", "To'xtatilgan"]];
 
 function pillText(t, now) {
-  if (t.status === "pauza") return "pauza";
+  if (t.status === "pauza") return "to'xtatilgan";
   if (!t.next_at) return t.run_date ? dm(new Date(t.run_date + "+05:00")) : "—";
   const d = new Date(t.next_at), g = groupOf(t, now);
   if (d <= now) return "hozir";
@@ -286,8 +377,97 @@ function pillText(t, now) {
   return dm(d);
 }
 
+/* ---------- Katta ekran: boshqaruv paneli ---------- */
+const DESK = matchMedia("(min-width: 1000px)");
+let sends = [], weekDone = 0;
+const HAFTA = ["yakshanba","dushanba","seshanba","chorshanba","payshanba","juma","shanba"];
+const dayName = d => HAFTA[new Date(dayKey(d) + "T12:00:00").getDay()];
+const OPEN_SEND = ["yuborildi", "soraldi", "javobsiz", "oqilmadi"];
+
+function dayLabel(d, now) {
+  const k = dayKey(d);
+  if (k === dayKey(now)) return "Bugun";
+  if (k === dayKey(new Date(now.getTime() + 864e5))) return "Ertaga";
+  if (k === dayKey(new Date(now.getTime() - 864e5))) return "Kecha";
+  return `${dm(d)}, ${dayName(d)}`;
+}
+function whenText(t, now) {
+  if (t.status === "pauza") return `To'xtatilgan · ${ht(t.human_time)}`;
+  if (!t.next_at) {
+    const f = t.last_fired_at ? new Date(t.last_fired_at) : (t.run_date ? new Date(t.run_date + "+05:00") : null);
+    return f ? `Eslatildi: ${dayLabel(f, now)} ${hm(f)} · hali ✅ bosilmagan` : "Vaqti belgilanmagan";
+  }
+  const d = new Date(t.next_at), at = `${dayLabel(d, now)} soat ${hm(d)}`;
+  return t.kind === "once" ? at : `${ht(t.human_time)} · navbatdagi: ${at}`;
+}
+function badges(t) {
+  const b = [];
+  if (t.bitguncha) b.push(`<span class="badge b-bit">Bajarilguncha</span>`);
+  if (t.manba === "suhbat") b.push(`<span class="badge b-chat">Yozishmadan</span>`);
+  if (t.manba === "sorov") b.push(`<span class="badge b-chat">Sizdan so'radi</span>`);
+  if (t.status === "pauza") b.push(`<span class="badge">To'xtatilgan</span>`);
+  return b.join("");
+}
+function card(t, g, now) {
+  const soon = g === "today" && t.next_at && new Date(t.next_at) - now < 3600e3 ? "soon" : "";
+  const who = !t.odam ? `<div class="ln who me">🙋 O'zingizga</div>`
+    : t.odam_tanlangan ? `<div class="ln who">👤 ${esc(t.odam)}ga yuboriladi</div>`
+    : `<div class="ln who pending">👤 ${esc(t.odam)} — botda odamni tanlang</div>`;
+  return `<div class="tc g-${g} ${soon} ${t.status === "pauza" ? "paused" : ""}" data-id="${t.id}" tabindex="0" role="button">
+    <div class="top"><span class="num">№ ${t.num}</span>${badges(t)}<span class="tm" data-left="${t.id}">${esc(pillText(t, now))}</span></div>
+    <div class="ttl">${esc(t.title)}</div>
+    <div class="ln">🕘 ${esc(whenText(t, now))}</div>${who}
+    <button class="ok" data-done="${t.id}" type="button">✅ Bajarildi</button></div>`;
+}
+function sendCard(x, now) {
+  const cls = ["javobsiz", "oqilmadi"].includes(x.holat) ? "bad" : "wait";
+  const d = new Date(x.yuborilgan_at);
+  return `<div class="sc"><div class="top"><span class="who">👤 ${esc(x.odam)}</span><span class="st ${cls}">${esc(x.holat_uz)}${x.oqilgan && x.holat === "yuborildi" ? ", o'qidi" : ""}</span></div>
+    <div class="m">${esc(x.title || x.matn)}</div><div class="r">Yuborildi: ${dayLabel(d, now)} ${hm(d)}</div></div>`;
+}
+function renderBoard() {
+  const now = new Date(), main = $("main");
+  const by = g => [...tasks].filter(t => groupOf(t, now) === g)
+    .sort((a, b) => (a.next_at ? new Date(a.next_at) : 0) - (b.next_at ? new Date(b.next_at) : 0));
+  const late = by("late"), today = by("today"), tom = by("tomorrow"), later = by("later"), pz = by("pauza");
+  const open = sends.filter(x => OPEN_SEND.includes(x.holat));
+  const list = (arr, g) => arr.map(t => card(t, g, now)).join("");
+  const col = (cls, title, n, body) => `<section class="col ${cls}"><h2>${title}<span class="cnt">${n}</span></h2>${body}</section>`;
+  main.innerHTML = `<div class="kpis">
+      <div class="kpi" style="--kc:var(--today)"><div class="v">${today.length}</div><div class="k">bugungi ish</div></div>
+      <div class="kpi" style="--kc:var(--late)"><div class="v">${late.length}</div><div class="k">vaqti o'tgan</div></div>
+      <div class="kpi" style="--kc:var(--soon)"><div class="v">${open.length}</div><div class="k">javob kutilmoqda</div></div>
+      <div class="kpi" style="--kc:var(--later)"><div class="v">${weekDone}</div><div class="k">7 kunda bajarildi</div></div></div>
+    <div class="board">
+      ${col("g-today", "Bugun", late.length + today.length,
+        (late.length ? `<div class="sub g-late">Vaqti o'tgan</div>${list(late, "late")}` : "")
+        + (today.length ? (late.length ? `<div class="sub">Bugun</div>` : "") + list(today, "today") : "")
+        + (!late.length && !today.length ? `<p class="none">Bugunga ish qolmadi 👌</p>` : ""))}
+      ${col("g-tomorrow", "Ertaga", tom.length, list(tom, "tomorrow") || `<p class="none">Ertaga hozircha bo'sh</p>`)}
+      ${col("g-later", "Keyinroq", later.length + pz.length,
+        (list(later, "later") || `<p class="none">Rejada boshqa ish yo'q</p>`)
+        + (pz.length ? `<div class="sub g-pauza">To'xtatilgan</div>${list(pz, "pauza")}` : ""))}
+      ${col("g-soon-c", "Javob kutilmoqda", open.length,
+        open.map(x => sendCard(x, now)).join("") || `<p class="none">Hamma javob bergan ✅</p>`)}
+    </div>`;
+}
+async function loadDeskExtras() {
+  try {
+    const [{ sends: s }, { history }] = await Promise.all([api("/api/sends"), api("/api/history")]);
+    sends = s;
+    weekDone = history.filter(h => Date.now() - new Date(h.done_at) < 7 * 864e5).length;
+  } catch (e) {}
+}
+function applyMode() {
+  document.body.classList.toggle("desk", DESK.matches);
+  if (tab === "tasks") renderTasks();
+}
+DESK.addEventListener?.("change", applyMode);
+document.body.classList.toggle("desk", DESK.matches);
+
 /* ---------- Vazifalar ---------- */
 function renderTasks() {
+  if (DESK.matches) return renderBoard();
   const now = new Date(), main = $("main");
   if (!tasks.length) { main.innerHTML = `<p class="empty-state">Hozircha vazifa yo'q.<br>Pastdagi <b>+</b> tugmasini bosing yoki AI'ga yozing.</p>`; return; }
   const sorted = [...tasks].sort((a, b) => (a.next_at ? new Date(a.next_at) : 0) - (b.next_at ? new Date(b.next_at) : 0));
@@ -298,7 +478,7 @@ function renderTasks() {
       const soon = g === "today" && t.next_at && new Date(t.next_at) - now < 3600e3 ? "soon" : "";
       return `<button class="row ${soon} ${t.status === "pauza" ? "paused" : ""} ${t.status === "bitdi" ? "done-cycle" : ""}" data-id="${t.id}">
         <span class="n">${t.num}</span>
-        <span class="t">${esc(t.title)}<span class="h">${esc(t.human_time)}${t.bitguncha && !/bitguncha/i.test(t.human_time) ? " · bitguncha" : ""}</span>${t.odam ? `<span class="who ${t.odam_tanlangan ? "" : "pending"}">→ ${esc(t.odam)}${t.odam_tanlangan ? "" : " · tanlanmagan"}</span>` : ""}</span>
+        <span class="t">${esc(t.title)}<span class="h">${esc(ht(t.human_time))}${t.bitguncha && !/bajarilguncha/.test(ht(t.human_time)) ? " · bajarilguncha" : ""}</span>${t.odam ? `<span class="who ${t.odam_tanlangan ? "" : "pending"}">→ ${esc(t.odam)}${t.odam_tanlangan ? "" : " · tanlanmagan"}</span>` : ""}</span>
         <span class="pill" data-left="${t.id}">${esc(pillText(t, now))}</span>
       </button>`;
     }).join("")}</div></section>`;
@@ -319,7 +499,7 @@ function renderHero() {
     + `${p.m}<span class="u">daq</span>` + (!p.d && !p.h ? `${pad(p.s)}<span class="u">son</span>` : "");
   const tom = dayKey(new Date(now.getTime() + 864e5));
   const day = dayKey(d) === dayKey(now) ? "Bugun" : dayKey(d) === tom ? "Ertaga" : dm(d);
-  $("heroWhen").textContent = `qoldi · ${day} soat ${hm(d)} da` + (up.kind === "once" ? "" : ` · ${up.human_time}`);
+  $("heroWhen").textContent = `qoldi · ${day} soat ${hm(d)} da` + (up.kind === "once" ? "" : ` · ${ht(up.human_time)}`);
   $("heroWho").hidden = !up.odam; $("heroWho").textContent = up.odam ? "→ " + up.odam : "";
 }
 
@@ -410,7 +590,7 @@ async function openEditor(t) {
   fillOdam(t?.odam_id, t && !t.odam_id ? t.odam : "");
   $("fXabar").value = t?.xabar || "";
   $("fActs").hidden = !t;
-  $("fPauseBtn").textContent = t?.status === "pauza" ? "▶️ Davom" : "⏸ Pauza";
+  $("fPauseBtn").textContent = t?.status === "pauza" ? "▶️ Davom" : "⏸ To'xtatish";
   $("editor").classList.add("open");
   tg?.BackButton?.show();
   if (!t) setTimeout(() => $("fTitle").focus(), 250);
@@ -455,7 +635,7 @@ $("fActs").addEventListener("click", async e => {
     if (act === "pause") await api(`/api/tasks/${t.id}/pause`, { method: "POST" });
     if (act === "delete") await api(`/api/tasks/${t.id}`, { method: "DELETE" });
     tg?.HapticFeedback?.notificationOccurred("success");
-    toast({ done: "Bajarildi ✅", pause: t.status === "pauza" ? "Davom ettirildi" : "Pauzaga qo'yildi", delete: "O'chirildi" }[act]);
+    toast({ done: "Bajarildi ✅", pause: t.status === "pauza" ? "Davom ettirildi" : "To'xtatildi", delete: "O'chirildi" }[act]);
     closeEditor(); await load();
   } catch (err) { toast(err.message); }
 });
@@ -467,7 +647,7 @@ function confirmBox(msg) {
 /* ---------- Umumiy ---------- */
 function render() { renderHero(); if (tab === "tasks") renderTasks(); }
 async function load() {
-  try { ({ tasks } = await api("/api/tasks")); render(); }
+  try { const r = api("/api/tasks"); if (DESK.matches) await loadDeskExtras(); ({ tasks } = await r); render(); }
   catch (e) { $("heroTitle").textContent = "Ma'lumot olinmadi"; $("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching.</p>`; }
 }
 function toast(msg) { const el = $("toast"); el.textContent = msg; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 3500); }
@@ -485,10 +665,21 @@ $("main").addEventListener("click", async e => {
     try { await api("/api/tg/logout", { method: "POST" }); toast("Akkaunt uzildi"); renderPeople(); } catch (err) { toast(err.message); }
     return;
   }
-  const row = e.target.closest(".row[data-id]"); if (!row) return;
+  const ok = e.target.closest("[data-done]");
+  if (ok) {
+    e.stopPropagation(); ok.disabled = true;
+    try { await api(`/api/tasks/${ok.dataset.done}/done`, { method: "POST" }); toast("Bajarildi ✅"); await load(); }
+    catch (err) { toast(err.message); ok.disabled = false; }
+    return;
+  }
+  const row = e.target.closest(".row[data-id], .tc[data-id]"); if (!row) return;
   const t = tasks.find(x => x.id == row.dataset.id); if (t) openEditor(t);
 });
 
+$("main").addEventListener("keydown", e => {
+  const c = e.target.closest?.(".tc[data-id]");
+  if (c && (e.key === "Enter" || e.key === " ") && e.target === c) { e.preventDefault(); const t = tasks.find(x => x.id == c.dataset.id); if (t) openEditor(t); }
+});
 $("main").addEventListener("submit", async e => {
   if (e.target.id !== "tgForm") return;
   e.preventDefault();
@@ -518,9 +709,18 @@ $("aiForm").addEventListener("submit", async e => {
   finally { btn.disabled = false; btn.textContent = "➤"; }
 });
 
+function tickClock() {
+  const n = new Date();
+  $("deskClock").textContent = `${dm(n)}, ${dayName(n)} · ${hm(n)}`;
+}
+tickClock();
+if (tg?.requestFullscreen && tg.isVersionAtLeast?.("8.0")) {
+  $("fsBtn").hidden = false;
+  $("fsBtn").addEventListener("click", () => tg.isFullscreen ? tg.exitFullscreen() : tg.requestFullscreen());
+}
 load();
 api("/api/people").then(r => people = r.people).catch(() => {});
-setInterval(() => { renderHero(); if (tab === "tasks") document.querySelectorAll("[data-left]").forEach(el => {
+setInterval(() => { renderHero(); if (DESK.matches && new Date().getSeconds() === 0) tickClock(); if (tab === "tasks") document.querySelectorAll("[data-left]").forEach(el => {
   const t = tasks.find(x => x.id == el.dataset.left); if (t) el.textContent = pillText(t, new Date()); }); }, 1000);
 setInterval(() => { if (!$("editor").classList.contains("open")) load(); }, 60000);
 </script>

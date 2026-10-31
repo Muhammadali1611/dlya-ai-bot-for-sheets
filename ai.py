@@ -20,6 +20,7 @@ Muhit o'zgaruvchilari:
 
 import os
 import json
+import re
 import time
 import logging
 
@@ -39,6 +40,52 @@ GEMINI_MODELS = [m.strip() for m in os.environ.get(
     or "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.6-flash",
 ).split(",") if m.strip()]
 _cooldown = {}  # model -> qachongacha ishlatilmaydi (time.time())
+# Pullik hisob ochilgach: aqlli ro'yxat (Pro birinchi) — sizning buyruqlaringiz va odamlar javobi uchun;
+# tez ro'yxat (Flash birinchi) — barcha suhbatlarni tinglash uchun (ko'p va arzon bo'lishi kerak).
+SMART_MODELS = [m.strip() for m in os.environ.get("GEMINI_SMART_MODELS", "").split(",") if m.strip()]
+_auto_done = False
+SMART_TIMEOUT_MS = int(os.environ.get("AI_SMART_TIMEOUT_MS", "30000"))
+
+
+def _ver(name):
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
+    return float(m.group(1)) if m else 0.0
+
+
+def _auto_models():
+    """Kalitda qaysi modellar ochiq ekanini bir marta so'rab, eng kuchlilarini tartiblaydi."""
+    global _auto_done, GEMINI_MODELS, SMART_MODELS
+    if _auto_done:
+        return
+    _auto_done = True
+    try:
+        names = []
+        for m in _get_gclient().models.list():
+            n = (m.name or "").replace("models/", "")
+            acts = getattr(m, "supported_actions", None) or []
+            if not n.startswith("gemini-") or (acts and "generateContent" not in acts):
+                continue
+            if any(x in n for x in ("tts", "image", "embedding", "live", "native-audio", "robotics",
+                                    "computer-use", "exp-", "learnlm", "nano")):
+                continue
+            names.append(n)
+        log.info("Ochiq Gemini modellar: %s", ", ".join(sorted(names)))
+
+        def best(kind, exclude=()):
+            c = [n for n in names if kind(n) and n not in exclude]
+            # yangi versiya birinchi; teng bo'lsa barqaror (preview emas) birinchi
+            return sorted(c, key=lambda n: (_ver(n), "preview" not in n, -len(n)), reverse=True)
+
+        pro = best(lambda n: "-pro" in n)
+        flash = best(lambda n: "flash" in n and "lite" not in n)
+        lite = best(lambda n: "flash-lite" in n)
+        if not os.environ.get("GEMINI_MODELS") and (flash or lite):
+            GEMINI_MODELS = (flash[:2] + lite[:2]) or GEMINI_MODELS
+        if not SMART_MODELS:
+            SMART_MODELS = pro[:1] + flash[:2] + lite[:1]
+        log.info("Aqlli tartib: %s | Tez tartib: %s", SMART_MODELS, GEMINI_MODELS)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Modellar ro'yxatini olib bo'lmadi: %s", e)
 
 
 def _clean(v):
@@ -415,7 +462,7 @@ def _understand_gemini(user_text, now_str, reminders, history=None):
     )
 
     def call():
-        return _gemini_generate(contents, config)
+        return _gemini_generate(contents, config, smart=True)
 
     raw = call()
 
@@ -442,19 +489,25 @@ def _has_audio(contents):
         return False
 
 
-def _gemini_generate(contents, config):
+def _gemini_generate(contents, config, smart=False):
     """Modellarni tartib bilan sinaydi; limit tugasa keyingisiga o'tadi.
-    Ovozli so'rovlarga ko'proq vaqt beriladi (eshitish uzoqroq davom etadi)."""
+    smart=True — Pro birinchi (sizning buyruqlaringiz). Ovozli so'rovlarga ko'proq vaqt beriladi."""
     from google.genai import errors as gerr, types as gtypes
+    _auto_models()
     if _has_audio(contents) and not getattr(config, "http_options", None):
         config.http_options = gtypes.HttpOptions(timeout=int(os.environ.get("AI_AUDIO_TIMEOUT_MS", "60000")))
+    elif smart and not getattr(config, "http_options", None):
+        config.http_options = gtypes.HttpOptions(timeout=SMART_TIMEOUT_MS)
+    order = (SMART_MODELS or GEMINI_MODELS) if smart else GEMINI_MODELS
     now = time.time()
-    models = [m for m in GEMINI_MODELS if _cooldown.get(m, 0) <= now] or GEMINI_MODELS
+    models = [m for m in order if _cooldown.get(m, 0) <= now] or order
     last_err = None
     for model in models:
         try:
+            t0 = time.time()
             resp = _get_gclient().models.generate_content(
                 model=model, contents=contents, config=config)
+            log.info("AI javobi: %s, %.1f s", model, time.time() - t0)
             return resp.text or ""
         except gerr.APIError as e:
             code, txt = getattr(e, "code", 0), str(e).lower()
@@ -478,7 +531,7 @@ def _gemini_generate(contents, config):
         except Exception as e:  # noqa: BLE001 — timeout / tarmoq
             if "timeout" in str(e).lower() or "timed out" in str(e).lower() or e.__class__.__name__.endswith("Timeout"):
                 _cooldown[model] = time.time() + 300
-                log.warning("%s 12 soniyada javob bermadi, keyingisi", model)
+                log.warning("%s vaqtida javob bermadi, keyingisi", model)
                 last_err = e
                 continue
             raise
@@ -522,7 +575,7 @@ def analyze_reply(task_title, sent_text, reply_text, audio=None, audio_mime="aud
         parts.append(types.Part(text=f"ODAMNING JAVOBI: {reply_text}"))
     config = types.GenerateContentConfig(
         system_instruction=REPLY_RULES, temperature=0.1, response_mime_type="application/json")
-    raw = _gemini_generate([types.Content(role="user", parts=parts)], config)
+    raw = _gemini_generate([types.Content(role="user", parts=parts)], config, smart=True)
     data = _parse_reply(raw)
     if not data.get("matn"):
         data["matn"] = reply_text or ""
@@ -584,7 +637,7 @@ def analyze_request(dialog, sender_name, now_str):
             f"YOZISHMA:\n{lines}")
     config = types.GenerateContentConfig(
         system_instruction=REQUEST_RULES, temperature=0.1, response_mime_type="application/json")
-    raw = _gemini_generate([types.Content(role="user", parts=[types.Part(text=text)])], config)
+    raw = _gemini_generate([types.Content(role="user", parts=[types.Part(text=text)])], config, smart=True)
     t = (raw or "").strip()
     a, b = t.find("{"), t.rfind("}")
     data = json.loads(t[a:b + 1] if a != -1 and b > a else t)

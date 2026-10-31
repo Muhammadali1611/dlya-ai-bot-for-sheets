@@ -36,7 +36,7 @@ REQUESTS = {}   # boshqalar bilan eslatma so'rovi suhbati: {tg_id: {"dialog": [.
 # Faqat shu so'zlar bor xabarlar AI'ga yuboriladi (boshqa yozishmalaringiz AI'ga bormaydi)
 CHATS = {}      # suhbat bufferi: {chat_id: {"name", "msgs": [(kim, matn, dt)], "last": dt, "kiril": bool}}
 CHAT_QUIET = int(os.environ.get("CHAT_QUIET_SECONDS", "90"))      # shuncha jimlikdan keyin tahlil
-CHAT_DAILY_LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "250"))  # kuniga AI tahlillari chegarasi
+CHAT_DAILY_LIMIT = int(os.environ.get("CHAT_DAILY_LIMIT", "800"))  # kuniga AI tahlillari chegarasi
 LISTEN_ALL = os.environ.get("LISTEN_ALL", "on") != "off"
 LISTEN_VOICE = os.environ.get("LISTEN_VOICE", "on") != "off"
 VOICE_MAX_SEC = int(os.environ.get("VOICE_MAX_SECONDS", "300"))   # bundan uzun ovozlar olinmaydi

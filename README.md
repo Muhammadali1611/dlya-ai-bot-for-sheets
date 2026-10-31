@@ -30,7 +30,7 @@ Botning pastidagi **📋 Vazifalar** tugmasi Telegram ichida ilova (Mini App) oc
 - Suhbat 1,5 daqiqa jim qolgach birga tahlil qilinadi; vaqt/va'da belgisi yo'q suhbatlar AI'ga bormaydi.
 - Topilgan har vazifa haqida sizga xabar va "❌ Bekor" tugmasi keladi.
 - Ovozli xabarlar va dumaloq videolar ham eshitiladi (5 daqiqagacha); suhbat ovozlari bilan bitta so'rovda tahlil qilinadi.
-- Guruhlar kuzatilmaydi. O'chirish: LISTEN_ALL=off (ovozlarni: LISTEN_VOICE=off). Kunlik chegara: CHAT_DAILY_LIMIT (250).
+- Guruhlar kuzatilmaydi. O'chirish: LISTEN_ALL=off (ovozlarni: LISTEN_VOICE=off). Kunlik chegara: CHAT_DAILY_LIMIT (800).
 
 ## Qanday ishlaydi
 - Vazifaning keyingi vaqti bazada (`next_at`). Bot har 30 soniyada vaqti kelganlarni tekshiradi —

@@ -532,6 +532,13 @@ async def main():
             log.warning("Menyu tugmasini qo'yib bo'lmadi: %s", e)
 
     kuzatuv.init(app.bot, UB, reminder_kb)
+
+    async def _probe():
+        try:
+            log.info("Gemini tarifi: %s", await asyncio.to_thread(ai.billing_probe))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Gemini tarifini tekshirib bo'lmadi: %s", e)
+    asyncio.create_task(_probe())
     try:
         await UB.start()
     except Exception as e:  # noqa: BLE001

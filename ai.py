@@ -496,6 +496,27 @@ def _has_audio(contents):
         return False
 
 
+def billing_probe():
+    """Pullik rejim ochiqmi — Pro modelga juda kichik so'rov yuborib tekshiradi (bepul tarifda Pro yopiq)."""
+    from google.genai import errors as gerr, types as gtypes
+    _auto_models()
+    pro = next((m for m in SMART_MODELS + GEMINI_MODELS if "-pro" in m), None)
+    if not pro:
+        return "pro model topilmadi"
+    try:
+        _get_gclient().models.generate_content(
+            model=pro, contents="ok",
+            config=gtypes.GenerateContentConfig(max_output_tokens=16))
+        return f"PULLIK REJIM OCHIQ ({pro} ishladi)"
+    except gerr.APIError as e:
+        code = getattr(e, "code", 0)
+        if code == 429:
+            return f"hali BEPUL tarif ({pro}: 429 limit)"
+        return f"aniqlab bo'lmadi ({pro}: {code})"
+    except Exception as e:  # noqa: BLE001
+        return f"aniqlab bo'lmadi: {e.__class__.__name__}"
+
+
 def _gemini_generate(contents, config, smart=False):
     """Modellarni tartib bilan sinaydi; limit tugasa keyingisiga o'tadi.
     smart=True — Pro birinchi (sizning buyruqlaringiz). Ovozli so'rovlarga ko'proq vaqt beriladi."""

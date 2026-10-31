@@ -290,6 +290,7 @@ async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
 
 async def fire_due(bot):
     now = now_tz()
+    mine = []
     for t in await db.due_tasks(now):
         old = t["next_at"]
         new = None
@@ -298,24 +299,42 @@ async def fire_due(bot):
             new = next_fire(t["kind"], t["trigger"], now=after)
         if not await db.claim_fire(t["id"], old, new):
             continue  # boshqa jarayon allaqachon yubordi
-        num = next((x["num"] for x in await db.list_tasks() if x["id"] == t["id"]), "?")
+        num = t["id"]
+        if t["kind"] == "once":
+            t["human_time"] = db.once_time(t["trigger"]) or t["human_time"]
         if t.get("odam_id") or t.get("odam_ism"):
             try:
                 await kuzatuv.deliver(t, num)
             except Exception as e:  # noqa: BLE001
                 log.exception("Odamga yuborishda xato (id=%s): %s", t["id"], e)
             continue
-        late = (now - old).total_seconds() > 600
-        text = (
-            f"\U0001F514 {num}) {t['title']}\n"
-            f"\U0001F552 {t['human_time']}"
-            + (" (kechikib)" if late else "")
-        )
-        try:
+        t["late"] = (now - old).total_seconds() > 600
+        mine.append(t)
+    if mine:
+        await send_reminders(bot, mine)
+
+
+async def send_reminders(bot, items):
+    """Bir vaqtda kelgan eslatmalar — bitta xabarda (har biriga ✅ tugma)."""
+    try:
+        if len(items) == 1:
+            t = items[0]
+            text = (f"\U0001F514 {t['id']}) {t['title']}\n\U0001F552 {t['human_time']}"
+                    + (" (kechikib)" if t["late"] else ""))
             await bot.send_message(OWNER_ID, text, reply_markup=reminder_kb(t["id"]))
-            log.info("Eslatma yuborildi: id=%s", t["id"])
-        except Exception as e:  # noqa: BLE001
-            log.warning("Eslatma yuborilmadi (id=%s): %s", t["id"], e)
+        else:
+            when = now_tz().strftime("%H:%M")
+            lines = [f"\U0001F514 {when} — {len(items)} ta ish:", ""]
+            lines += [f"{t['id']}) {t['title']}" for t in items]
+            btns = [InlineKeyboardButton(f"✅ {t['id']}", callback_data=f"done:{t['id']}") for t in items]
+            rows = [btns[i:i + 4] for i in range(0, len(btns), 4)]
+            ids = ",".join(str(t["id"]) for t in items)
+            if len(ids) <= 50:
+                rows.append([InlineKeyboardButton("⏰ Hammasi 1 soatdan keyin", callback_data=f"snzall:{ids}")])
+            await bot.send_message(OWNER_ID, "\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
+        log.info("Eslatma yuborildi: %s", [t["id"] for t in items])
+    except Exception as e:  # noqa: BLE001
+        log.warning("Eslatma yuborilmadi (%s): %s", [t["id"] for t in items], e)
 
 
 def reminder_kb(tid):
@@ -330,7 +349,7 @@ async def snooze(tid, how):
     """Eslatmani keyinga suradi. Takroriy vazifaning asosiy jadvali o'zgarmaydi:
     navbatdagi eslatma suriladi, keyingilari odatdagidek davom etadi."""
     t = await db.get_task(tid)
-    if not t:
+    if not t or t["status"] == "bitdi":
         return None
     now = now_tz()
     if how == "tm":
@@ -358,6 +377,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not q or q.from_user.id != OWNER_ID:
         return
     parts = (q.data or "").split(":")
+    if parts[0] == "snzall" and len(parts) > 1:
+        ids = [int(x) for x in parts[1].split(",") if x.isdigit()]
+        done = 0
+        for i in ids:
+            if await snooze(i, "60"):
+                done += 1
+        await q.answer(f"{done} ta ish 1 soatga surildi")
+        if q.message:
+            at = (now_tz() + timedelta(hours=1)).strftime("%H:%M")
+            await q.edit_message_text((q.message.text or "") + f"\n\n⏰ Qolganlari {at} da yana eslatiladi")
+        return
     try:
         tid = int(parts[1])
     except (IndexError, ValueError):
@@ -391,7 +421,19 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if parts[0] == "done":
         r = await db.mark_done(tid)
         await q.answer("Bajarildi ✅" if r else "Bu vazifa endi yo'q")
-        if q.message:
+        if not q.message:
+            return
+        markup = getattr(q.message, "reply_markup", None)
+        grouped = markup and sum(len(row) for row in markup.inline_keyboard) > 3
+        if grouped:
+            # Guruhli xabar: shu qatorni ✅ qilib, tugmasini olib tashlaymiz
+            new_text = "\n".join(("✅ " + ln) if ln.startswith(f"{tid}) ") else ln for ln in base.split("\n"))
+            rows = [[b for b in row if b.callback_data != f"done:{tid}"] for row in markup.inline_keyboard]
+            rows = [row for row in rows if row]
+            if not any(b.callback_data.startswith("done:") for row in rows for b in row):
+                rows = []
+            await q.edit_message_text(new_text, reply_markup=InlineKeyboardMarkup(rows) if rows else None)
+        else:
             await q.edit_message_text(base + ("\n\n✅ Bajarildi" if r else "\n\n— vazifa topilmadi"))
     elif parts[0] == "snz" and len(parts) > 2:
         at = await snooze(tid, parts[2])
@@ -444,6 +486,10 @@ async def scheduler_loop(bot):
             if tick % 2 == 0:  # har daqiqada
                 await kuzatuv.followup_tick()
                 await kuzatuv.flush_chats()
+            if tick % 120 == 1:  # soatiga bir marta
+                gone = await db.archive_stale_once(24)
+                if gone:
+                    log.info("Avtomatik tarixga o'tkazildi: %s", [g["id"] for g in gone])
             now = now_tz()
             if MORNING_AT != "off" and last_digest != now.date() and now.strftime("%H:%M") >= MORNING_AT:
                 last_digest = now.date()

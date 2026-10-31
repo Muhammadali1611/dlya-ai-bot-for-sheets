@@ -185,6 +185,17 @@ Vaqt aytilmasa va "hozir/darhol" ma'nosi bo'lsa — run_date = HOZIRGI VAQT + 1 
 - Mavjud vazifani odamga biriktirish ("4-vazifani Akmal akaga biriktir") → action "update":
   eskisini o'chir, yangisini kimga va xabar bilan to'liq yoz.
 
+## SANA VA TAKRORNI TO'G'RI TUSHUNISH — eng ko'p xato shu yerda
+- TAKRORIY (recurring/interval) faqat gapda "har", "doim", "har kuni/hafta/oy", "har safar" kabi so'z
+  BO'LSA. Aks holda — BIR MARTALIK (once).
+- "5 kuni", "5-da", "5-sanada", "5 noyabr" — bu OYNING 5-KUNI (sana), haftaning 5-kuni EMAS.
+  Eng yaqin kelayotgan 5-sanani ol (bu oyda o'tgan bo'lsa — keyingi oy). "Juma" degan so'z bo'lmasa,
+  hech qachon jumaga aylantirma.
+- "har oyning 5-kuni" — recurring {"day":5}. "har 5 kunda" — interval {"days":5}.
+- reply'da sanani ANIQ yoz: "5-noyabr (chorshanba) 8:00 da ..." — "ertaga", "juma kuni" demasdan.
+  Shunda foydalanuvchi xatoni darrov ko'radi.
+- human_time ham aniq sana bilan bo'lsin (bir martalik uchun): "5-noyabr 8:00".
+
 ## VAQT JADVALI (trigger) QOIDALARI — juda muhim
 
 kind = "once" (bir martalik):
@@ -424,9 +435,19 @@ def _understand_gemini(user_text, now_str, reminders, history=None):
     return result
 
 
+def _has_audio(contents):
+    try:
+        return any(getattr(p, "inline_data", None) for c in contents for p in (c.parts or []))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _gemini_generate(contents, config):
-    """Modellarni tartib bilan sinaydi; limit tugasa keyingisiga o'tadi."""
-    from google.genai import errors as gerr
+    """Modellarni tartib bilan sinaydi; limit tugasa keyingisiga o'tadi.
+    Ovozli so'rovlarga ko'proq vaqt beriladi (eshitish uzoqroq davom etadi)."""
+    from google.genai import errors as gerr, types as gtypes
+    if _has_audio(contents) and not getattr(config, "http_options", None):
+        config.http_options = gtypes.HttpOptions(timeout=int(os.environ.get("AI_AUDIO_TIMEOUT_MS", "60000")))
     now = time.time()
     models = [m for m in GEMINI_MODELS if _cooldown.get(m, 0) <= now] or GEMINI_MODELS
     last_err = None
@@ -449,7 +470,7 @@ def _gemini_generate(contents, config):
                 _cooldown[model] = time.time() + 86400
                 log.warning("%s mavjud emas, keyingi modelga o'tilmoqda: %s", model, e)
                 continue
-            if code in (500, 503) or "overloaded" in txt or "unavailable" in txt:
+            if code in (500, 503, 504) or "overloaded" in txt or "unavailable" in txt or "deadline" in txt:
                 _cooldown[model] = time.time() + 300  # 5 daqiqa unga urinmaymiz
                 log.warning("%s band (%s), keyingisi sinab ko'rilmoqda", model, code)
                 continue

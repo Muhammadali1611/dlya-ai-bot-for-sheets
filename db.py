@@ -96,13 +96,33 @@ def left_text(next_at, now=None):
     return f"{d} kun {h:02d}:{m:02d}"
 
 
+OYLAR = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust",
+         "sentabr", "oktabr", "noyabr", "dekabr"]
+HAFTA = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]
+
+
+def date_text(dt):
+    """'5-noyabr (chorshanba) 8:00' — nisbiy so'zlarsiz, hech qachon eskirmaydi."""
+    dt = dt.astimezone(TZ) if dt.tzinfo else dt
+    return f"{dt.day}-{OYLAR[dt.month - 1]} ({HAFTA[dt.weekday()]}) {dt.hour}:{dt.minute:02d}"
+
+
+def once_time(trigger):
+    try:
+        return date_text(datetime.fromisoformat(trigger["run_date"]))
+    except (KeyError, TypeError, ValueError):
+        return ""
+
+
 def _decorate(rows):
-    """Raqam (1, 2, 3...) va AI/ro'yxat uchun qulay maydonlarni qo'shadi."""
+    """Raqam = vazifaning doimiy id'si (o'zgarmaydi) va qulay maydonlar."""
     now = datetime.now(TZ)
     out = []
-    for i, r in enumerate(rows, start=1):
+    for r in rows:
         d = _row(r)
-        d["num"] = i
+        d["num"] = d["id"]
+        if d["kind"] == "once":
+            d["human_time"] = once_time(d["trigger"]) or d["human_time"]
         nx = d["next_at"]
         d["next"] = nx.astimezone(TZ).strftime("%d.%m.%Y %H:%M") if nx else ""
         if d["status"] == "pauza":
@@ -209,6 +229,25 @@ async def set_status(tid, status, next_at=None):
 async def set_next(tid, next_at):
     await _pool.execute(
         "update eslatma.vazifalar set next_at = $2, updated_at = now() where id = $1", tid, next_at)
+
+
+async def archive_stale_once(hours=24):
+    """Eslatmasi yuborilgan, lekin 'bajarildi' deyilmagan bir martalik vazifalarni
+    `hours` soatdan keyin tarixga o'tkazadi (ro'yxat to'lib ketmasin)."""
+    async with _pool.acquire() as c, c.transaction():
+        rows = await c.fetch(
+            """select id, title, human_time, trigger from eslatma.vazifalar
+               where kind = 'once' and next_at is null and status = 'faol'
+                 and last_fired_at is not null and last_fired_at < now() - make_interval(hours => $1)""",
+            hours)
+        for r in rows:
+            t = r["trigger"]
+            t = json.loads(t) if isinstance(t, str) else t
+            await c.execute(
+                "insert into eslatma.tarix (vazifa_id, title, human_time, izoh) values ($1, $2, $3, $4)",
+                r["id"], r["title"], once_time(t) or r["human_time"], "eslatildi, avtomatik yopildi")
+            await c.execute("delete from eslatma.vazifalar where id = $1", r["id"])
+        return [dict(r) for r in rows]
 
 
 async def monthly_reset():

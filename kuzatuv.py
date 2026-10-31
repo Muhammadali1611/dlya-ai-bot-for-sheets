@@ -318,7 +318,7 @@ async def _buffer(event, who):
         audio = True  # yuklab olish pastda, chat tekshirilgandan keyin
     elif len(text) < 4:
         return
-    chat_id = event.chat_id
+    chat_id = getattr(event, "chat_id", None) or event.sender_id
     c = CHATS.get(chat_id)
     if c is None:
         ent = await event.get_chat()
@@ -373,7 +373,17 @@ async def flush_chats():
                 ai.analyze_chat, [(k, m, t.strftime("%H:%M"), a) for k, m, t, a in c["msgs"]], c["name"],
                 now.strftime("%Y-%m-%d %H:%M (%A)"))
         except Exception as e:  # noqa: BLE001
-            log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)
+            if not c.get("retried"):
+                # Yo'qolib ketmasin: 2 daqiqadan keyin yana bir marta urinamiz
+                c["retried"] = True
+                c["last"] = now
+                if chat_id not in CHATS:
+                    CHATS[chat_id] = c
+                else:  # shu orada yangi xabarlar kelgan — birlashtiramiz
+                    CHATS[chat_id]["msgs"] = (c["msgs"] + CHATS[chat_id]["msgs"])[-25:]
+                log.warning("Suhbatni tahlil qilib bo'lmadi (%s), qayta urinaman: %s", c["name"], e)
+            else:
+                log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)
             continue
         if found:
             await _save_found(chat_id, c, found)

@@ -43,6 +43,9 @@
     font-variant-numeric: tabular-nums; letter-spacing: .01em; }
   .hero-clock .u { font-size: 22px; font-weight: 500; opacity: .8; margin: 0 10px 0 3px; }
   .hero-when { font-size: 13.5px; opacity: .9; margin: 0; }
+  .bigbtn { display: block; margin-top: 12px; border: 0; border-radius: 12px; padding: 10px 14px; width: 100%;
+    background: rgba(255,255,255,.95); color: #1e293b; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .desk .bigbtn { display: none !important; }
   .hero-who { display: inline-block; margin-top: 8px; background: rgba(255,255,255,.2); border-radius: 999px;
     padding: 3px 10px; font-size: 13px; }
 
@@ -260,6 +263,7 @@
   <div class="hero-clock" id="heroClock" hidden></div>
   <p class="hero-when" id="heroWhen"></p>
   <span class="hero-who" id="heroWho" hidden></span>
+  <button class="bigbtn" id="bigBtn" type="button" hidden>🖥 Katta ekranda ochish</button>
 </section>
 
 <div class="seg" role="tablist">
@@ -335,7 +339,16 @@ tg?.ready(); tg?.expand();
 try { tg?.setHeaderColor?.("#2b7fff"); } catch (e) {}
 const TZ = "Asia/Tashkent";
 const dev = new URLSearchParams(location.search).get("dev");
-const AUTH = tg?.initData || (dev ? "dev:" + dev : "");
+// Kompyuter brauzerida: maxfiy havola (#k=...) bir marta saqlanadi, manzil satridan o'chiriladi
+let panelKey = "";
+try {
+  const m = location.hash.match(/k=([\w-]+)/);
+  if (m) { panelKey = m[1]; localStorage.setItem("panelKey", panelKey); history.replaceState(null, "", location.pathname); }
+  else panelKey = localStorage.getItem("panelKey") || "";
+} catch (e) { const m = location.hash.match(/k=([\w-]+)/); if (m) panelKey = m[1]; }
+const AUTH = tg?.initData || (panelKey ? "panel:" + panelKey : dev ? "dev:" + dev : "");
+const IN_TG = !!tg?.initData;
+const TG_DESKTOP = IN_TG && ["tdesktop", "macos", "weba", "webk", "web", "unigram"].includes(tg?.platform);
 const $ = id => document.getElementById(id);
 
 let tasks = [], people = [], tab = "tasks", editing = null;
@@ -538,7 +551,8 @@ async function renderPeople() {
       return `<div class="send"><div class="top"><span>${esc(x.odam)}</span><span class="st ${cls(x.holat)}">${esc(x.holat_uz)}${x.oqilgan && x.holat === "yuborildi" ? ", o'qidi" : ""}</span></div>
         <div class="m">${esc(x.matn)}</div>${x.javob ? `<div class="r">${x.javob_turi === "ovoz" ? "🎤 " : ""}«${esc(x.javob)}»</div>` : ""}<div class="r">${dm(d)}, ${hm(d)}</div></div>`;
     }).join("")}</div></section>` : "";
-    main.innerHTML = `<section class="card">${acc}</section><section class="group g-tomorrow"><h2>Odamlar <span class="cnt">${people.length}</span></h2>${ppl}</section>${snd}`;
+    const pcard = `<section class="card"><h3>Kompyuter paneli</h3><p>Vazifalarni Chrome'da katta ekranda ochadigan maxfiy havola. Birov bilib qolsa — yangisini oling, eskisi darhol ishlamay qoladi.</p><div class="field"><button class="btn" id="panelOpen" type="button">🖥 Ochish</button><button class="btn danger-text" id="panelNew" type="button">Havolani yangilash</button></div></section>`;
+    main.innerHTML = `<section class="card">${acc}</section>${IN_TG ? pcard : ""}<section class="group g-tomorrow"><h2>Odamlar <span class="cnt">${people.length}</span></h2>${ppl}</section>${snd}`;
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
@@ -648,7 +662,7 @@ function confirmBox(msg) {
 function render() { renderHero(); if (tab === "tasks") renderTasks(); }
 async function load() {
   try { const r = api("/api/tasks"); if (DESK.matches) await loadDeskExtras(); ({ tasks } = await r); render(); }
-  catch (e) { $("heroTitle").textContent = "Ma'lumot olinmadi"; $("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching.</p>`; }
+  catch (e) { $("heroTitle").textContent = "Ma'lumot olinmadi"; $("main").innerHTML = `<p class="err">${esc(e.message)}. Ilovani bot ichidagi «📋 Vazifalar» tugmasi orqali oching (kompyuterda: «🖥 Katta ekranda ochish»).</p>`; }
 }
 function toast(msg) { const el = $("toast"); el.textContent = msg; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 3500); }
 
@@ -660,6 +674,8 @@ $("main").addEventListener("click", async e => {
     catch (err) { toast(err.message); }
     return;
   }
+  if (e.target.id === "panelOpen") return openBig(false);
+  if (e.target.id === "panelNew") { if (await confirmBox("Eski havola bekor qilinsinmi? Uni ochgan brauzerlar ishlamay qoladi.")) openBig(true); return; }
   if (e.target.id === "tgLogout") {
     if (!(await confirmBox("Akkaunt uzilsinmi? Odamlarga xabar yuborish to'xtaydi."))) return;
     try { await api("/api/tg/logout", { method: "POST" }); toast("Akkaunt uzildi"); renderPeople(); } catch (err) { toast(err.message); }
@@ -714,6 +730,14 @@ function tickClock() {
   $("deskClock").textContent = `${dm(n)}, ${dayName(n)} · ${hm(n)}`;
 }
 tickClock();
+async function openBig(fresh) {
+  try {
+    const { url } = await api("/api/panel-link" + (fresh ? "?yangi=1" : ""), { method: "POST" });
+    if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
+    toast(fresh ? "Eski havola bekor qilindi, yangisi ochildi" : "Brauzerda ochildi. Oynani monitorga o'tkazib, F11 bosing");
+  } catch (e) { toast(e.message); }
+}
+if (TG_DESKTOP && !DESK.matches) { $("bigBtn").hidden = false; $("bigBtn").addEventListener("click", () => openBig(false)); }
 if (tg?.requestFullscreen && tg.isVersionAtLeast?.("8.0")) {
   $("fsBtn").hidden = false;
   $("fsBtn").addEventListener("click", () => tg.isFullscreen ? tg.exitFullscreen() : tg.requestFullscreen());

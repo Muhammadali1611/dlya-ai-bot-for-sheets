@@ -9,6 +9,7 @@ import hmac
 import json
 import time
 import hashlib
+import secrets
 import logging
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -56,11 +57,43 @@ async def auth(request, handler):
     init = request.headers.get("X-Init-Data", "")
     if DEV_TOKEN and init == "dev:" + DEV_TOKEN:
         user = {"id": OWNER_ID}
+    elif init.startswith("panel:") and await _panel_ok(init[6:]):
+        user = {"id": OWNER_ID}  # kompyuter brauzeridagi panel (maxfiy havola orqali)
     else:
         user = verify_init_data(init)
     if not user or user.get("id") != OWNER_ID:
         return web.json_response({"error": "ruxsat yo'q"}, status=403)
     return await handler(request)
+
+
+_panel_cache = {"t": None, "at": 0}
+
+
+async def _panel_token(create=False):
+    if _panel_cache["t"] and time.time() - _panel_cache["at"] < 300:
+        return _panel_cache["t"]
+    tok = await db.get_setting("panel_token")
+    if not tok and create:
+        tok = secrets.token_urlsafe(24)
+        await db.set_setting("panel_token", tok)
+    _panel_cache.update(t=tok, at=time.time())
+    return tok
+
+
+async def _panel_ok(tok):
+    real = await _panel_token()
+    return bool(real and tok and hmac.compare_digest(real, tok))
+
+
+async def api_panel_link(request):
+    """Brauzerda (24" monitorda) ochish uchun maxfiy havola. ?yangi=1 — eskisini bekor qilib yangisini beradi."""
+    if request.query.get("yangi"):
+        await db.set_setting("panel_token", None)
+        _panel_cache.update(t=None, at=0)
+    tok = await _panel_token(create=True)
+    host = request.host
+    scheme = "https" if (request.headers.get("X-Forwarded-Proto") == "https" or "railway.app" in host) else request.scheme
+    return web.json_response({"url": f"{scheme}://{host}/#k={tok}"})
 
 
 def _task_json(t):
@@ -353,6 +386,7 @@ def build_app(handle_text=None, err_text=str, ub=None, bot=None):
     app.router.add_get("/api/tasks/{tid:\\d+}", api_task_get)
     app.router.add_put("/api/tasks/{tid:\\d+}", api_task_update)
     app.router.add_post("/api/tasks/form", api_task_create_form)
+    app.router.add_post("/api/panel-link", api_panel_link)
     app.router.add_get("/api/tg/status", api_tg_status)
     app.router.add_post("/api/tg/code", api_tg_code)
     app.router.add_post("/api/tg/login", api_tg_login)

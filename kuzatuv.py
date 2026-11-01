@@ -77,8 +77,9 @@ PLAN_DAY_RE = re.compile(
 PLAN_ACT_RE = re.compile(
     r"(boramiz|boraman|borish|borasiz|kelaman|kelamiz|kelish|kelasiz|uchrash|ko'rish|ko‘rish|qilamiz|qilish kerak|"
     r"kerak|olib|beraman|berasiz|to'la|tola|yuborasiz|tayyorla|чиқамиз|борамиз|бораман|бориш|келаман|келамиз|"
-    r"yeymiz|ovqat|gaplashamiz|chiqamiz|ketamiz|yig'ilamiz|majlis|"
-    r"учраш|кўриш|қиламиз|керак|оламиз|берасиз|тайёрла|еймиз|овқат|гаплашамиз|кетамиз)", re.I)
+    r"yeymiz|ovqat|gaplashamiz|chiqamiz|chiqaman|chiqasiz|chiqish|jo'nayman|jo'naymiz|ketaman|o'taman|"
+    r"ketamiz|yig'ilamiz|majlis|"
+    r"учраш|кўриш|қиламиз|керак|оламиз|берасиз|тайёрла|еймиз|овқат|гаплашамиз|кетамиз|чиқаман|чиқасиз|кетаман)", re.I)
 REASK_MIN = int(os.environ.get("REASK_MINUTES", "60"))   # savolga javob bo'lmasa, shuncha daqiqadan keyin yana so'raydi
 REMIND_RE = re.compile(r"(eslat|eslab|esla[bt]ib|esimga sol|yodimga sol|эслат|эслаб|напомн|напомин)", re.I)
 BOT = None      # telegram.Bot
@@ -348,6 +349,8 @@ async def on_message(event):
 
     # 2) Yangi so'rov yoki kunga bog'langan reja — alohida suhbat sifatida aniqlashtiramiz
     if is_new and await handle_request(event, text):
+        HIST.setdefault(uid, []).append(("u", text[:400], now_tz()))
+        HIST[uid] = HIST[uid][-30:]
         return
 
     # 3) Ochiq savolimiz bor ("soat nechada?") — oddiy javob ("10da") eng oxirgi savolga tegishli
@@ -442,15 +445,18 @@ async def flush_chats():
         hist_in = [(k, m, t.strftime("%d.%m %H:%M")) for k, m, t in hist]
         now_s = now.strftime("%Y-%m-%d %H:%M (%A)")
         heard = {}
+        mine = await _contact_tasks(chat_id, c["name"])
         try:
             # 1-bosqich: arzon model — umuman vazifa bormi?
             found = await asyncio.to_thread(ai.analyze_chat, dialog, c["name"], now_s,
-                                            history=hist_in, out=heard)
-            if found:
-                # 2-bosqich: vazifa bor — aqlli model butun suhbatni o'qib, aniq va to'liq yozadi
+                                            history=hist_in, out=heard, tasks=mine)
+            if found or heard.get("bajarildi") or heard.get("soat_kerak"):
+                # 2-bosqich: nimadir bor — aqlli model butun suhbatni o'qib, aniq va to'liq yozadi
                 try:
-                    found = await asyncio.to_thread(ai.analyze_chat, dialog, c["name"], now_s,
-                                                    history=hist_in, smart=True, out=heard) or found
+                    h2 = {}
+                    f2 = await asyncio.to_thread(ai.analyze_chat, dialog, c["name"], now_s,
+                                                 history=hist_in, smart=True, out=h2, tasks=mine)
+                    found, heard = f2, h2
                 except Exception as e2:  # noqa: BLE001
                     log.warning("Aqlli tahlil bo'lmadi, oddiysi olinadi: %s", e2)
         except Exception as e:  # noqa: BLE001
@@ -467,8 +473,64 @@ async def flush_chats():
                 log.warning("Suhbatni tahlil qilib bo'lmadi (%s): %s", c["name"], e)
             continue
         _remember(chat_id, hist, c["msgs"], heard.get("eshitilgan") or [])
+        for b in heard.get("bajarildi") or []:
+            await _mark_done_from_chat(c, b, mine)
+        for q in (heard.get("soat_kerak") or [])[:2]:
+            await _ask_hour(chat_id, c, q)
         if found:
             await _save_found(chat_id, c, found)
+
+
+async def _contact_tasks(chat_id, name):
+    """Shu odamga tegishli ochiq vazifalar: unga biriktirilgan yoki nomida ismi bor."""
+    try:
+        known = await db.get_person_by_tg(chat_id)
+        first = (name or "").split()[0].lower() if name else ""
+        out = []
+        for t in await db.list_tasks():
+            if t["status"] == "pauza":
+                continue
+            if (known and t.get("odam_id") == known["id"]) or (len(first) >= 3 and first in t["title"].lower()):
+                out.append({"id": t["id"], "title": t["title"], "human_time": t.get("human_time")})
+        return out[:15]
+    except Exception as e:  # noqa: BLE001
+        log.warning("Odam vazifalarini olib bo'lmadi: %s", e)
+        return []
+
+
+async def _mark_done_from_chat(c, b, mine):
+    t = next((x for x in mine if x["id"] == b.get("id")), None)
+    if not t:
+        return
+    natija = (b.get("natija") or "").strip()
+    await db.mark_done(t["id"], izoh=f"yozishmadan: {natija}"[:500])
+    await owner(f"✅ {t['id']}) {t['title']} — yozishmangizdan bajarildi deb belgiladim.\n💬 {c['name']}: {natija}")
+    log.info("Yozishmadan bajarildi: vazifa=%s", t["id"])
+
+
+async def _ask_hour(chat_id, c, q):
+    """Reja aytildi, lekin soati yo'q — o'sha odamdan soatini so'raymiz (javobi aniqlashtirish oqimiga tushadi)."""
+    if not UB or not UB.connected:
+        await owner(f"🕒 {c['name']}: «{(q.get('sabab') or '')[:150]}»\nSoati aytilmadi: {q['title']}")
+        return
+    if any(r.get("last_q") == q["savol"] for r in _active(chat_id)):
+        return
+    known = await db.get_person_by_tg(chat_id)
+    alifbo = (known or {}).get("alifbo") or ("kiril" if c.get("kiril") else "lotin")
+    try:
+        mid = await UB.send(chat_id, for_person(q["savol"], alifbo))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Soatini so'rab bo'lmadi: %s", e)
+        return
+    now = now_tz()
+    REQUESTS.setdefault(chat_id, []).append({
+        "dialog": [("u", q.get("sabab") or q["title"]), ("men", q["savol"])],
+        "kiril": alifbo == "kiril", "name": c["name"], "alifbo": alifbo, "asked_at": now,
+        "last_q": q["savol"], "q_msg": mid, "told_owner": True,
+        "until": now + timedelta(minutes=REASK_MIN * 3 + 30)})
+    await owner(f"🕒 {c['name']}: «{(q.get('sabab') or '')[:150]}»\n↳ Soatini so'radim: «{q['savol']}»\n"
+                f"Javob kelgach vazifa yozaman: {q['title']}")
+    log.info("Soati so'raldi: chat=%s", chat_id)
 
 
 def _remember(chat_id, hist, msgs, heard):
@@ -533,8 +595,14 @@ async def handle_request(event, text, req=None):
     req["dialog"].append(("u", text))
     req["until"] = now_tz() + timedelta(minutes=30)
     try:
-        r = await asyncio.to_thread(ai.analyze_request, req["dialog"], name,
-                                    now_tz().strftime("%Y-%m-%d %H:%M (%A)"))
+        ctx = [(k, m, t.strftime("%d.%m %H:%M")) for k, m, t in HIST.get(uid, [])]
+        ctx += [(k, m or "(ovozli xabar)", t.strftime("%d.%m %H:%M")) for k, m, t, _ in (CHATS.get(uid) or {}).get("msgs", [])]
+        try:
+            r = await asyncio.to_thread(ai.analyze_request, req["dialog"], name,
+                                        now_tz().strftime("%Y-%m-%d %H:%M (%A)"), history=ctx)
+        except TypeError:  # eski imzo (sinovlardagi soxta funksiya)
+            r = await asyncio.to_thread(ai.analyze_request, req["dialog"], name,
+                                        now_tz().strftime("%Y-%m-%d %H:%M (%A)"))
     except Exception as e:  # noqa: BLE001
         log.exception("So'rovni tahlil qilib bo'lmadi: %s", e)
         _drop(uid, req)
